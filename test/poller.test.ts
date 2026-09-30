@@ -12,6 +12,7 @@ import {
 	fakeClock,
 	fakeProcesses,
 	type FakeProcesses,
+	gzipped,
 	resetRegistry,
 	restoreProcesses,
 	session,
@@ -49,6 +50,7 @@ describe("a resumed session", () => {
 		procs.of(oldId).write("old-run\n");
 		procs.of(oldId).exit(0);
 		await clock.until(() => first.sent.length > 0);
+		await clock.until(() => gzipped(first, oldId));
 		resetRegistry(); // a new Pi process: ids restart at bg-1, the log directory stays
 		const second = session({ id: first.id });
 		const id = await start(second, "echo new-run");
@@ -171,5 +173,23 @@ describe("the poller survives faults", () => {
 		assert.equal(s.sent.length, 1);
 		assert.match(s.sent[0].message.content, /finished: exit unknown/);
 		assert.deepEqual(s.statuses.at(-1), { key: "bg", text: undefined });
+	});
+
+	it("hides an exit marker written during a deadline kill, and keeps the killed state", async () => {
+		const s = session();
+		const id = await start(s, "long", { timeout: 3 });
+		const proc = procs.of(id);
+		proc.write("real output\n");
+		// The command finishes and writes its marker while the kill's grace period is running.
+		proc.onSignal = (signal) => {
+			if (signal === "SIGTERM") proc.exit(0);
+		};
+		await clock.until(() => s.sent.length > 0);
+		assert.match(s.sent[0].message.content, /finished: killed \(timed out\)/);
+		assert.doesNotMatch(s.sent[0].message.content, /__PI_BG_EXIT__/);
+		assert.match(s.sent[0].message.content, /Command: long\nLast output:\nreal output$/);
+		const result = text(await s.toolCall("bash_output", { id }));
+		assert.doesNotMatch(result, /__PI_BG_EXIT__/);
+		assert.match(result, /real output/);
 	});
 });

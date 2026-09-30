@@ -24,10 +24,10 @@ export function markerNeedle(nonce: string): Buffer {
 /** Find the task's marker in the log, scanning only what earlier calls had not. Throws when the log cannot be read. */
 export function locateMarker(task: Task): Marker | undefined {
 	if (task.marker !== undefined) return task.marker;
-	// A settled task (killed, exit unknown, or exited without a marker) can never
-	// gain a valid exit marker afterwards; skipping the scan also keeps a gzipped
-	// log from being opened as a plain one.
-	if (task.state !== "running") return undefined;
+	// A gzipped log cannot be scanned as a plain one. The state is deliberately not
+	// consulted: a settled task may still gain an exit marker written during the
+	// kill's grace period, and that marker must be cut out of the view too.
+	if (task.logPath.endsWith(".gz")) return undefined;
 	const needle = markerNeedle(task.nonce);
 	const overlap = needle.length + TAIL;
 	const fd = openSync(task.logPath, "r");
@@ -78,56 +78,66 @@ export function openView(task: Task): View {
 	try {
 		// Size first, then the marker: a marker written in between lies past `physicalSize`.
 		const physicalSize = fstatSync(fd).size;
-		const cut = cutRegion(task);
-		const cutLength = cut === undefined ? 0 : cut.end - cut.start;
-		const size = cut === undefined ? physicalSize : Math.max(cut.start, physicalSize - cutLength);
-		const physical = (offset: number) => (cut !== undefined && offset >= cut.start ? offset + cutLength : offset);
-		const raw = (start: number, end: number) => {
+		return viewFor(task, physicalSize, (start, end) => {
 			const buffer = Buffer.alloc(end - start);
 			readSync(fd, buffer, 0, buffer.length, start);
 			return buffer;
-		};
-		return {
-			size,
-			marker: task.marker,
-			read(start, end) {
-				if (cut === undefined || end <= cut.start || start >= cut.start) {
-					return raw(physical(start), physical(start) + (end - start));
-				}
-				return Buffer.concat([raw(start, cut.start), raw(cut.end, end + cutLength)]);
-			},
-			close: () => closeSync(fd),
-		};
+		}, () => closeSync(fd));
 	} catch (error) {
 		closeSync(fd);
 		throw error;
 	}
 }
 
-/** The bytes the view cuts out: the exit marker, or the log-limit marker. */
-function cutRegion(task: Task): { start: number; end: number } | undefined {
-	const marker = locateMarker(task);
-	if (marker !== undefined) return marker;
-	return task.limitMarker;
+/** A region of the physical log the view removes. */
+type Region = { start: number; end: number };
+
+/** The regions the view cuts out, in file order: the exit marker and the log-limit marker. Both can be present. */
+function cutRegions(task: Task): Region[] {
+	const regions: Region[] = [];
+	locateMarker(task);
+	if (task.marker !== undefined) regions.push(task.marker);
+	if (task.limitMarker !== undefined) regions.push(task.limitMarker);
+	return regions.sort((a, b) => a.start - b.start);
 }
 
-/** A finished, gzipped log read whole into memory (the 100 MiB limit bounds it). */
-function openGzView(task: Task): View {
-	const buffer = gunzipSync(readFileSync(task.logPath));
-	const cut = cutRegion(task);
-	const cutLength = cut === undefined ? 0 : cut.end - cut.start;
-	const size = cut === undefined ? buffer.length : Math.max(cut.start, buffer.length - cutLength);
-	const physical = (offset: number) => (cut !== undefined && offset >= cut.start ? offset + cutLength : offset);
-	const raw = (start: number, end: number) => Buffer.from(buffer.subarray(start, end));
+/**
+ * A view over kept segments of the physical log. Offsets the reader sees skip
+ * every cut region, so read positions stay valid whether or not a marker has
+ * appeared yet; two markers (a command that exited during the limit kill) are
+ * both cut.
+ */
+function viewFor(task: Task, physicalSize: number, read: (start: number, end: number) => Buffer, close: () => void): View {
+	const segments: { virtual: number; physical: number; length: number }[] = [];
+	let physical = 0;
+	let virtual = 0;
+	for (const cut of cutRegions(task)) {
+		if (cut.start > physical) {
+			const length = cut.start - physical;
+			segments.push({ virtual, physical, length });
+			virtual += length;
+		}
+		physical = Math.max(physical, cut.end);
+	}
+	if (physicalSize > physical) segments.push({ virtual, physical, length: physicalSize - physical });
 	return {
-		size,
+		size: virtual + Math.max(physicalSize - physical, 0),
 		marker: task.marker,
 		read(start, end) {
-			if (cut === undefined || end <= cut.start || start >= cut.start) {
-				return raw(physical(start), physical(start) + (end - start));
+			const parts: Buffer[] = [];
+			for (const segment of segments) {
+				const from = Math.max(start, segment.virtual);
+				const to = Math.min(end, segment.virtual + segment.length);
+				if (to > from) parts.push(read(segment.physical + (from - segment.virtual), segment.physical + (to - segment.virtual)));
 			}
-			return Buffer.concat([raw(start, cut.start), raw(cut.end, end + cutLength)]);
+			return parts.length === 1 ? parts[0] : Buffer.concat(parts);
 		},
-		close: () => {},
+		close,
 	};
+}
+
+/** A finished, gzipped log read whole into memory. The limit is checked per tick, so this can exceed 100 MiB. */
+function openGzView(task: Task): View {
+	const buffer = gunzipSync(readFileSync(task.logPath));
+	return viewFor(task, buffer.length, (start, end) => Buffer.from(buffer.subarray(start, end)), () => {});
 }

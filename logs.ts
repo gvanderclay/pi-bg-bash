@@ -1,23 +1,26 @@
 // Log housekeeping: the size limit that stops a runaway task, gzipping a
 // finished log once the agent has been told, and removing old logs at session
-// start. The size check itself runs in the registry poller (the TypeScript
-// watch loop), not in the detached Pi-crash watcher, so it records the kill
-// reason and sends the completion message through the same path as a deadline
-// kill; see the ticket's `## Answer`.
+// start. The size check runs on its own fast timer in the registry (about four
+// times a second) and again in the 2 s poller, so it records the kill reason
+// and sends the completion message through the same path as a deadline kill;
+// see the ticket's `## Answer`.
 import {
 	appendFileSync,
+	createReadStream,
+	createWriteStream,
 	lstatSync,
-	readFileSync,
 	readdirSync,
 	rmdirSync,
+	rmSync,
 	statSync,
 	unlinkSync,
-	writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import { gzipSync } from "node:zlib";
+import { pipeline } from "node:stream/promises";
+import { createGzip } from "node:zlib";
 
-import { stateRoot } from "./launch.ts";
+import { OWNER_FILE, ownerPid, stateRoot } from "./launch.ts";
+import { processPort } from "./port.ts";
 import type { Task } from "./registry.ts";
 
 const MIB = 1024 * 1024;
@@ -47,7 +50,8 @@ export function overLogLimit(task: Task): boolean {
 /**
  * Append the `__PI_BG_LIMIT__:<nonce>` marker and remember where it sits, so the
  * view cuts it out like the exit marker. The caller has already stopped the
- * group, so nothing writes after it.
+ * group; a group that survived SIGKILL (`stuck`) can still write after it, but
+ * the cut is a region, so the view stays correct.
  */
 export function appendLimitMarker(task: Task): void {
 	const line = `\n__PI_BG_LIMIT__:${task.nonce}\n`;
@@ -58,21 +62,25 @@ export function appendLimitMarker(task: Task): void {
 
 /**
  * Compress the task's finished log to `<id>.log.gz` (0600), delete the plain
- * file, and point the task at the gzipped one. A missing log (an exit that
- * could no longer be known) is left as it is.
+ * file, and point the task at the gzipped one. The gzip is streamed, so a large
+ * log neither blocks the event loop nor hits the 2 GiB read ceiling. A missing
+ * log (an exit that could no longer be known) is left as it is.
  */
-export function gzipLog(task: Task): void {
+export async function gzipLog(task: Task): Promise<void> {
 	if (task.logPath.endsWith(".gz")) return;
 	const plain = task.logPath;
-	let data: Buffer;
+	const gz = `${plain}.gz`;
 	try {
-		data = readFileSync(plain);
+		await pipeline(createReadStream(plain), createGzip(), createWriteStream(gz, { mode: 0o600 }));
 	} catch (error) {
+		try {
+			rmSync(gz, { force: true, recursive: true });
+		} catch {
+			// removing a partial `.gz` must never replace the gzip error
+		}
 		if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
 		throw error;
 	}
-	const gz = `${plain}.gz`;
-	writeFileSync(gz, gzipSync(data), { mode: 0o600 });
 	task.logPath = gz;
 	unlinkSync(plain);
 }
@@ -91,8 +99,9 @@ function mtimeMs(path: string): number | undefined {
  * older than the retention. It only ever deletes regular files whose name is
  * the extension's own (`bg-<n>.log` or `.gz`), never a registered task's log,
  * and it never follows symlinks (a symlinked directory or log is left alone).
- * `tasks` is the registry's current task list, for the "never a running task's
- * log" rule.
+ * A session directory whose owner marker names a live process is skipped whole:
+ * another Pi may still be writing there. `tasks` is the registry's current task
+ * list, for the "never a running task's log" rule.
  */
 export function cleanupOldLogs(tasks: Iterable<Task>): void {
 	const cutoff = Date.now() - CLEANUP_DAYS * DAY;
@@ -111,6 +120,18 @@ export function cleanupOldLogs(tasks: Iterable<Task>): void {
 	for (const session of sessions) {
 		if (!session.isDirectory()) continue; // a symlinked directory is not descended into
 		const dir = join(stateRoot(), session.name);
+		// Another live Pi process owns this directory: its tasks may still be writing.
+		// A liveness check that throws cannot name a live owner (the pid is bounded in `ownerPid`).
+		const owner = ownerPid(dir);
+		let ownerAlive = false;
+		if (owner !== undefined) {
+			try {
+				ownerAlive = processPort().pidAlive(owner);
+			} catch {
+				ownerAlive = false;
+			}
+		}
+		if (ownerAlive) continue;
 		// Captured before any unlink: removing a file updates the directory's mtime.
 		const dirMt = mtimeMs(dir);
 		let entries;
@@ -127,10 +148,16 @@ export function cleanupOldLogs(tasks: Iterable<Task>): void {
 			if (mt !== undefined && mt < cutoff) {
 				try {
 					unlinkSync(path);
-				} catch (error) {
-					if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+				} catch {
+					// housekeeping is best-effort: one unreadable file never fails session start
 				}
 			}
+		}
+		// No live owner (the marker missing, malformed, or naming a dead pid): drop it so the directory can empty and be removed.
+		try {
+			unlinkSync(join(dir, OWNER_FILE));
+		} catch {
+			// already gone, or not removable: leave it
 		}
 		if (dirMt !== undefined && dirMt < cutoff) {
 			try {

@@ -6,7 +6,7 @@
 // separate watcher, its own detached process outside the task's group, kills
 // whatever the command left running when Pi dies (see `WATCH`).
 import { spawn } from "node:child_process";
-import { accessSync, chmodSync, closeSync, constants, mkdirSync, openSync, rmSync } from "node:fs";
+import { accessSync, chmodSync, closeSync, constants, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
 
@@ -43,12 +43,39 @@ export function stateRoot(): string {
 	return join(process.env.XDG_STATE_HOME || join(homedir(), ".local", "state"), "pi-bg");
 }
 
-/** This session's log directory, created `0o700`. */
+/** The file in a session log directory naming the Pi process that created it. */
+export const OWNER_FILE = "owner.pid";
+
+/** This session's log directory, created `0o700` and tagged with this process's pid so another Pi can tell it is live. */
 export function sessionLogDir(sessionId: string): string {
 	const dir = join(stateRoot(), sessionId);
 	mkdirSync(dir, { recursive: true, mode: 0o700 });
 	chmodSync(dir, 0o700);
+	// Written aside and renamed in, so another Pi's cleanup never reads a truncated, empty marker.
+	const tmp = join(dir, `${OWNER_FILE}.${process.pid}.tmp`);
+	try {
+		writeFileSync(tmp, String(process.pid), { mode: 0o600 });
+		renameSync(tmp, join(dir, OWNER_FILE));
+	} catch {
+		try {
+			rmSync(tmp, { force: true });
+		} catch {
+			// nothing more to do
+		}
+		// the directory stays usable without an owner marker
+	}
 	return dir;
+}
+
+/** The pid in a session directory's owner marker, or `undefined` when it has none or is malformed. */
+export function ownerPid(dir: string): number | undefined {
+	try {
+		const pid = Number(readFileSync(join(dir, OWNER_FILE), "utf8").trim());
+		// Bounded like `process.kill`: a larger value throws rather than answering liveness.
+		return Number.isInteger(pid) && pid > 1 && pid <= 0x7fffffff ? pid : undefined;
+	} catch {
+		return undefined;
+	}
 }
 
 export type Shell = { shell: string; args: string[]; env: NodeJS.ProcessEnv };

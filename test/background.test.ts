@@ -13,6 +13,7 @@ import {
 	fakeClock,
 	fakeProcesses,
 	type FakeProcesses,
+	gzipped,
 	resetRegistry,
 	restoreProcesses,
 	root,
@@ -81,7 +82,8 @@ describe("bash with background: true", () => {
 		procs.of(id).write("hi\n");
 		procs.of(id).exit(3);
 		await clock.until(() => s.sent.length > 0);
-		assert.deepEqual(readdirSync(s.logDir()), [`${id}.log.gz`]);
+		await clock.until(() => gzipped(s, id));
+		assert.deepEqual(readdirSync(s.logDir()).sort(), [`${id}.log.gz`, "owner.pid"].sort());
 		assert.equal(statSync(s.logDir()).mode & 0o777, 0o700);
 		assert.equal(statSync(join(s.logDir(), `${id}.log.gz`)).mode & 0o777, 0o600);
 		assert.match(gunzipSync(readFileSync(join(s.logDir(), `${id}.log.gz`))).toString("utf8"), /^hi\n\n__PI_BG_EXIT__:[0-9a-f]{16}:3\n$/);

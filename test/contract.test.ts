@@ -16,7 +16,7 @@ import { createBashToolDefinition } from "@earendil-works/pi-coding-agent";
 import { launch } from "../launch.ts";
 import { realPort } from "../port.ts";
 import { getRegistry } from "../registry.ts";
-import { agentDir, cleanup, logHas, logText, realSleep, resetRegistry, root, session, type Session, start, text, waitFor } from "./harness.ts";
+import { agentDir, cleanup, gzipped, logHas, logText, realSleep, resetRegistry, root, session, type Session, start, text, waitFor } from "./harness.ts";
 
 // A short grace period, so a task that ignores SIGTERM takes well under a second to kill.
 process.env.PI_BG_BASH_GRACE_MS = "300";
@@ -161,7 +161,7 @@ describe("a foreground command", () => {
 		assert.equal(text(ours), text(theirs as never));
 		assert.equal(ours.isError, true);
 		assert.equal(text(await s.toolCall("bash_tasks", {})), "No background tasks.");
-		assert.equal(existsSync(s.logDir()) ? readdirSync(s.logDir()).length : 0, 0);
+		assert.deepEqual(existsSync(s.logDir()) ? readdirSync(s.logDir()).filter((name) => name !== "owner.pid") : [], []);
 	});
 
 	it("with an explicit timeout is killed at it, group and all, and never promoted", async () => {
@@ -246,7 +246,7 @@ describe("a task that cannot start", () => {
 		const s = session();
 		s.ctx.cwd = join(root, "missing-dir");
 		await assert.rejects(s.toolCall("bash", { command: "true", background: true }), /Working directory does not exist: .*missing-dir/);
-		assert.deepEqual(existsSync(s.logDir()) ? readdirSync(s.logDir()) : [], []);
+		assert.deepEqual(existsSync(s.logDir()) ? readdirSync(s.logDir()).filter((name) => name !== "owner.pid") : [], []);
 		assert.equal(getRegistry().tasks.size, 0);
 	});
 
@@ -262,7 +262,7 @@ describe("a task that cannot start", () => {
 		} finally {
 			chmodSync(locked, 0o700);
 		}
-		assert.deepEqual(existsSync(s.logDir()) ? readdirSync(s.logDir()) : [], []);
+		assert.deepEqual(existsSync(s.logDir()) ? readdirSync(s.logDir()).filter((name) => name !== "owner.pid") : [], []);
 		assert.equal(getRegistry().tasks.size, 0);
 	});
 
@@ -364,7 +364,7 @@ describe("the log limit", () => {
 		const task = getRegistry().tasks.get(id)!;
 		await waitFor(() => !realPort.groupAlive(task.pid), "the group's end", 5000);
 		const gz = join(s.logDir(), `${id}.log.gz`);
-		await waitFor(() => existsSync(gz), "the gzipped log", 5000);
+		await waitFor(() => gzipped(s, id), "the gzipped log", 5000);
 		const full = gunzipSync(readFileSync(gz)).toString("utf8");
 		assert.match(full, new RegExp(`\\n__PI_BG_LIMIT__:[0-9a-f]{16}\\n$`));
 		assert.doesNotMatch(full, /__PI_BG_EXIT__/);

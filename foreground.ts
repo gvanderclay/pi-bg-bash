@@ -252,9 +252,12 @@ function operations(ctx: ExtensionContext, run: Run) {
 	} satisfies BashOperations;
 }
 
-/** Pi's "Full output: <temp file>" footer names a file that stops growing at promotion; point at the task's log instead. */
+/** Pi's "Full output: <temp file>" footer names a file that stops growing at promotion; point at the task's log instead, noting that gzip renames it on completion. */
 function retarget(text: string, piFile: string, task: Task): string {
-	return text.replace(`Full output: ${piFile}]`, `Full output so far: ${task.logPath}. bash_output ${task.id} continues after this.]`);
+	return text.replace(
+		`Full output: ${piFile}]`,
+		`Full output so far: ${task.logPath}; it is gzipped to ${task.logPath}.gz once the task ends. bash_output ${task.id} continues after this.]`,
+	);
 }
 
 /** The text a promoted call answers with. */

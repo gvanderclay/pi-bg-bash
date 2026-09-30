@@ -1,7 +1,7 @@
 // The task registry, kept on `globalThis` because Pi loads extensions with
 // `moduleCache: false`: module state does not survive `/reload`, this does.
-// It also holds the one 2 s poller and the current `pi` and context, which
-// each load refreshes.
+// It holds the 2 s poller, the 250 ms log-limit check, and the current `pi` and
+// context, which each load refreshes.
 import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
@@ -9,7 +9,7 @@ import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import type { ForegroundRun } from "./foreground.ts";
-import { killGroup } from "./kill.ts";
+import { killGroup, killGroupNow } from "./kill.ts";
 import { type LaunchOptions, sessionLogDir } from "./launch.ts";
 import { appendLimitMarker, gzipLog, overLogLimit } from "./logs.ts";
 import { locateMarker, type Marker } from "./logview.ts";
@@ -19,6 +19,8 @@ import { processPort } from "./port.ts";
 const KEY = Symbol.for("pi-bg-bash.registry");
 /** How often the poller looks at running tasks. */
 export const POLL_MS = 2000;
+/** How often the stat-only log-limit check runs: fast enough that a runaway writes little past the limit. */
+const LOG_LIMIT_MS = 250;
 /** Failed log reads in a row, with the pid dead, after which the exit is called unknown. */
 const READ_FAILURES_LIMIT = 5;
 
@@ -71,6 +73,8 @@ type Registry = {
 	pi?: ExtensionAPI;
 	ctx?: ExtensionContext;
 	poller?: ReturnType<typeof setInterval>;
+	/** The fast log-limit check; separate from the poller so the limit barely overshoots. */
+	limitTimer?: ReturnType<typeof setInterval>;
 	/** Wrapper pids of every group launched here and not yet given up, for the session-end kill. */
 	groups: Set<number>;
 	/** Pids whose group the poller saw empty after the marker: never signal these again (the pid may be reused). */
@@ -128,7 +132,7 @@ export function forgetGroup(pid: number): void {
  */
 export async function endSession(): Promise<void> {
 	const registry = getRegistry();
-	stopPoller(registry);
+	stopTimers(registry);
 	while (registry.launching.size > 0) await Promise.all([...registry.launching]);
 	const tasks = [...registry.tasks.values()];
 	// No completion may leak into the next session from a kill still in flight
@@ -146,7 +150,7 @@ export async function endSession(): Promise<void> {
 export function attach(pi: ExtensionAPI): void {
 	const registry = getRegistry();
 	registry.pi = pi;
-	stopPoller(registry);
+	stopTimers(registry);
 	startPollerIfNeeded(registry);
 }
 
@@ -246,15 +250,36 @@ function sessionEnv(ctx: ExtensionContext): Record<string, string> {
 	return env;
 }
 
-function stopPoller(registry: Registry): void {
+function stopTimers(registry: Registry): void {
 	if (registry.poller !== undefined) clearInterval(registry.poller);
 	registry.poller = undefined;
+	if (registry.limitTimer !== undefined) clearInterval(registry.limitTimer);
+	registry.limitTimer = undefined;
+}
+
+function stopLimitTimer(registry: Registry): void {
+	if (registry.limitTimer !== undefined) clearInterval(registry.limitTimer);
+	registry.limitTimer = undefined;
 }
 
 function startPollerIfNeeded(registry: Registry): void {
-	if (registry.poller !== undefined || !hasPending(registry)) return;
-	registry.poller = setInterval(() => poll(registry), POLL_MS);
-	registry.poller.unref();
+	if (registry.poller === undefined && hasPending(registry)) {
+		registry.poller = setInterval(() => poll(registry), POLL_MS);
+		registry.poller.unref();
+	}
+	if (registry.limitTimer === undefined && runningCount(registry) > 0) {
+		registry.limitTimer = setInterval(() => checkLogLimits(registry), LOG_LIMIT_MS);
+		registry.limitTimer.unref();
+	}
+}
+
+/** A stat-only check, faster than the poller, so a runaway is killed just past the limit instead of a whole tick past it. */
+function checkLogLimits(registry: Registry): void {
+	for (const task of registry.tasks.values()) {
+		if (task.state !== "running" || task.killing !== undefined) continue;
+		if (overLogLimit(task)) killForLogLimit(registry, task).catch(() => {});
+	}
+	if (runningCount(registry) === 0) stopLimitTimer(registry);
 }
 
 /** A task the poller still has work for: running, or ended and not yet reported. */
@@ -377,18 +402,41 @@ async function stopGroup(registry: Registry, task: Task, reason: KillReason, not
 }
 
 /**
- * Stop a task whose log passed the size limit: kill the group first so the
- * marker ends the log, write the `__PI_BG_LIMIT__` marker, record the reason,
- * and report it as `killed (log limit passed)`. The kill is remembered on
- * `task.killing` so later poller ticks do not start a second one.
+ * Stop a task whose log passed the size limit: kill the group at once (SIGKILL) so
+ * the marker ends the log, write the `__PI_BG_LIMIT__` marker, record the reason,
+ * and report it as `killed (log limit passed)`. If the command wrote its own exit
+ * marker while the kill was in flight, it is reported as `exited` with that code
+ * instead. The kill is remembered on `task.killing` so later ticks do not start a
+ * second one.
  */
 async function killForLogLimit(registry: Registry, task: Task): Promise<"killed" | "gone" | "stuck"> {
 	const stopping = (async () => {
-		const how = await killGroup(task.pid);
-		appendLimitMarker(task);
+		const how = await killGroupNow(task.pid);
+		// Kill first, so whatever the command writes while dying stays before the marker.
+		try {
+			appendLimitMarker(task);
+		} catch {
+			// the marker could not be written (EACCES, ENOSPC); the reason must survive without it
+		}
 		task.endedAt = Date.now();
-		task.state = "killed";
-		task.reason = "log limit passed";
+		// The command may have written its exit marker while the kill was in flight.
+		let marker: Marker | undefined;
+		try {
+			marker = locateMarker(task);
+		} catch {
+			marker = undefined; // an unreadable log cannot supply one
+		}
+		if (marker !== undefined) {
+			task.state = "exited";
+			task.exitCode = marker.code;
+		} else if (how === "gone") {
+			task.state = "exit-unknown";
+		} else {
+			task.state = "killed";
+			task.reason = "log limit passed";
+		}
+		// A group known empty must never be signalled again: the pid may be reused.
+		if (how !== "stuck") registry.emptyGroups.add(task.pid);
 		updateFooter(registry);
 		try {
 			notifyOnce(registry, task);
@@ -414,7 +462,7 @@ function poll(registry: Registry): void {
 			// try again next tick
 		}
 	}
-	if (!hasPending(registry)) stopPoller(registry);
+	if (!hasPending(registry)) stopTimers(registry);
 }
 
 /** Report the task's end once: the flag is set before the send, and reset when the send throws so a later tick retries. The log is gzipped only after the message really went out (Q21); a gzip failure leaves the plain log and must not resend the message. */
@@ -427,9 +475,8 @@ function notifyOnce(registry: Registry, task: Task): void {
 		task.notified = false;
 		throw error;
 	}
-	try {
-		gzipLog(task);
-	} catch {
-		// the message is already out; the plain log stays readable
-	}
+	// Gzip only after the message is out (Q21). A group that is still alive (a
+	// `stuck` group, or a child the command left) may still write to the log, so
+	// leave it plain; the 7-day cleanup handles it.
+	if (!processPort().groupAlive(task.pid)) void gzipLog(task).catch(() => {});
 }

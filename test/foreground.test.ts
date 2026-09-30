@@ -390,6 +390,7 @@ describe("a foreground bash call past 120 s", () => {
 			const task = getRegistry().tasks.get("bg-1")!;
 			assert.match(text(result), /\[Showing lines 3001-5000 of 5000\. .*\]$/);
 			assert.ok(text(result).includes(task.logPath), "points at the task's log");
+			assert.match(text(result), /Full output so far: /);
 			assert.doesNotMatch(text(result), /pi-bash-/);
 			assert.equal(result.details, undefined);
 			assert.deepEqual(readdirSync(tmp), [], "Pi's temp file is deleted");

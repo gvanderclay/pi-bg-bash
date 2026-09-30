@@ -26,22 +26,28 @@ task id at once, and reports the result when the command exits.
 - **Spawn failures:** a missing working directory is refused with "Working
   directory does not exist"; a failed spawn rejects, and no log is left.
 - **Logs:** `$XDG_STATE_HOME/pi-bg/<session-id>/<id>.log` (default
-  `~/.local/state`), directory `0o700`, file `0o600`, created exclusively. Ids
-  restart at `bg-1` per Pi process, so a resumed session skips any id whose
-  `.log` or `.log.gz` already exists. Once a task's completion message has been
-  sent, the log is gzipped to `<id>.log.gz` (0600) with `node:zlib` and the
-  plain file is deleted; `bash_output` and the completion tail read it
-  transparently. A task is killed, with the message `killed (log limit passed)`
-  and a `__PI_BG_LIMIT__` marker ending its log, once its log passes 100 MiB;
+  `~/.local/state`), directory `0o700`, file `0o600`, created exclusively. The
+  session directory carries an `owner.pid` marker naming the Pi process that
+  owns it, so another Pi's cleanup never deletes a live task's log. A pid the
+  OS has reused can keep a dead owner's directory out of reach for one session
+  start, but the next start re-checks and removes it once the pid is gone. Ids restart
+  at `bg-1` per Pi process, so a resumed session skips any id whose `.log` or
+  `.log.gz` already exists. Once a task's completion message has been sent, the
+  log is streamed through `node:zlib` to `<id>.log.gz` (0600) and the plain file
+  is deleted; `bash_output` and the completion tail read it transparently. A
+  task is killed, with the message `killed (log limit passed)` and a
+  `__PI_BG_LIMIT__` marker ending its log, once its log passes 100 MiB; the size
+  is checked four times a second, so a runaway is stopped just past the limit.
   `PI_BG_BASH_LOG_LIMIT_BYTES` lowers the limit for the contract test. At
   `session_start`, logs and emptied session directories older than 7 days are
-  removed — never a running task's log, and never anything but the extension's
-  own `bg-<n>.log` / `.log.gz` files.
+  removed — never a running task's log or a directory owned by a live Pi, and
+  never anything but the extension's own `bg-<n>.log` / `.log.gz` files.
 - **Not honoured:** Pi's `shellPath` and `shellCommandPrefix` settings. An
   extension cannot read them, so neither background nor foreground commands
   use them.
 - **Registry:** on `globalThis` under `Symbol.for("pi-bg-bash.registry")`, with
-  one 2 s poller. A task ends when its marker appears, or when its pid is gone
+  one 2 s poller and a 250 ms stat-only log-limit check. A task ends when its
+  marker appears, or when its pid is gone
   with no marker (exit unknown). A log that is missing also means exit unknown.
   Any other read error is retried on later ticks; once the pid is dead and five
   reads in a row have failed, the exit is unknown too. A single failure never
@@ -154,8 +160,11 @@ running or finished.
 - **How a kill is recorded:** a killed task has state `killed` and a `reason`
   (`killed by agent`, `killed by user`, `timed out`, `log limit passed`) kept in the registry, and
   reported as `killed (reason)` by `bash_tasks`, `bash_output` and the completion
-  message. The group kill also takes the wrapper down, so no marker is written
-  and the log's marker stays digits-only. Session end reports nothing (the tasks
+  message. The group kill also takes the wrapper down, so no exit marker is
+  written and the log's exit marker stays digits-only; the log-limit kill appends
+  a `__PI_BG_LIMIT__` marker instead, hidden from output like the exit marker.
+  A task whose command exits while the limit kill is in flight is reported as
+  `exited` with its code. Session end reports nothing (the tasks
   are forgotten), and Pi-gone is written by the watcher as `__PI_BG_GONE__:`,
   not as a registry reason.
 - `bash_tasks()`: one line per task, `id | state | runtime | command`. State is

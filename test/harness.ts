@@ -174,6 +174,9 @@ export async function start(s: Session, command: string, extra: object = {}): Pr
 const logPath = (s: Session, id: string) => join(s.logDir(), `${id}.log`);
 /** The task's log as it is on disk, marker included. */
 export const logText = (s: Session, id: string) => readFileSync(logPath(s, id), "utf8");
+/** Whether the task's log has finished gzipping: the `.gz` exists and the plain file is gone (the gzip is asynchronous). */
+export const gzipped = (s: Session, id: string) =>
+	existsSync(join(s.logDir(), `${id}.log.gz`)) && !existsSync(logPath(s, id));
 /** Wait, in real time, until the task's log holds `needle` (contract tests). */
 export const logHas = (s: Session, id: string, needle: string) =>
 	waitFor(() => existsSync(logPath(s, id)) && logText(s, id).includes(needle), `log ${id} holding ${JSON.stringify(needle)}`);
@@ -194,6 +197,8 @@ export type FakeProc = {
 	ignoresTerm: boolean;
 	/** Even SIGKILL leaves the group in place. */
 	unkillable: boolean;
+	/** Runs when the group receives a signal, before the signal's usual effect: a test can write while the command is dying. */
+	onSignal: ((signal: string) => void) | undefined;
 	/** Append output to the log. */
 	write(data: string | Buffer): void;
 	/** The command exits: the wrapper appends the marker with this task's nonce. `child` leaves a group member behind. */
@@ -259,6 +264,7 @@ export function fakeProcesses(): FakeProcesses {
 				signals: [],
 				ignoresTerm: false,
 				unkillable: false,
+				onSignal: undefined,
 				write: (data) => appendFileSync(options.logPath, data),
 				exit(code, opts = {}) {
 					appendFileSync(options.logPath, `\n__PI_BG_EXIT__:${options.nonce}:${code}\n`);
@@ -280,6 +286,7 @@ export function fakeProcesses(): FakeProcesses {
 			};
 			receivers.set(pid, (signal) => {
 				proc.signals.push(signal);
+				proc.onSignal?.(signal);
 				if (signal === "SIGTERM") {
 					leader = false;
 					child = proc.ignoresTerm;
@@ -362,6 +369,8 @@ export function resetRegistry(): void {
 	const registry = getRegistry();
 	if (registry.poller !== undefined) clearInterval(registry.poller);
 	registry.poller = undefined;
+	if (registry.limitTimer !== undefined) clearInterval(registry.limitTimer);
+	registry.limitTimer = undefined;
 	// The port maps ESRCH and the macOS zombie-only-group EPERM to "gone".
 	for (const task of registry.tasks.values()) processPort().signalGroup(task.pid, "SIGKILL");
 	registry.tasks.clear();
