@@ -106,7 +106,9 @@ output kept.
   command running it does nothing. `ctrl+b` is left to Pi as cursor-left. When
   several foreground commands run at once (parallel tool calls), one press
   promotes every one of them, since the turn stays blocked until they all
-  finish.
+  finish. `ctrl+shift+b` needs a terminal that reports modified keys, through
+  the kitty keyboard protocol or `modifyOtherKeys`; inside tmux it needs
+  `extended-keys on` as well, which this setup sets.
 - **Hint:** 2 s into a foreground command, a widget below the editor shows
   "(ctrl+shift+b to background)", so fast commands never flash it. The moment
   the command's exit marker is seen the hint timer is cancelled and a shown
@@ -226,8 +228,10 @@ pi install <path to this directory>
 ```
 
 The package has no dependencies and no build step. The `pi` manifest loads only
-`./index.ts`; the tests under `test/` are not loaded by Pi. Not installed in any
-route yet.
+`./index.ts`; the tests under `test/` are not loaded by Pi. Installed in the
+scratch route (`pi/.pi-scratch/agent/settings.json`). The daily route's
+`npm:pi-bg-tasks` claims the same `bash` tool, `/bg` command and `ctrl+shift+b`
+shortcut, so a root must install only one of the two.
 
 ## Requirements
 
