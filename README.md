@@ -86,9 +86,23 @@ output kept.
 - **Not promoted:** a command with any explicit `timeout` (killed at it) or one
   starting with `sleep`. `PI_BG_BASH_PROMOTE_MS` shortens the threshold, for the
   contract test.
-- The shortcut and the hint are ticket 06. The one promotion path is
+- **Shortcut:** `ctrl+shift+b` moves the running foreground command to the
+  background at once, without waiting the 120 s. It applies to any command,
+  including `sleep` and ones with an explicit `timeout`. With no foreground
+  command running it does nothing. `ctrl+b` is left to Pi as cursor-left. When
+  several foreground commands run at once (parallel tool calls), one press
+  promotes every one of them, since the turn stays blocked until they all
+  finish.
+- **Hint:** 2 s into a foreground command, a widget below the editor shows
+  "(ctrl+shift+b to background)", so fast commands never flash it. The moment
+  the command's exit marker is seen the hint timer is cancelled and a shown
+  hint is cleared, before the 100 ms late-output grace; it is also cleared when
+  the command is promoted, aborted, or times out. No widget is set when there is
+  no UI. The show and clear are best-effort: a stale context's `hasUI`/`ui`
+  getters throwing is ignored, and the call still ends.
+- The one promotion path is
   `promote()` on each entry of `foregroundRuns()` (`foreground.ts`), the set of
-  foreground calls in flight; the 120 s timer calls it too.
+  foreground calls in flight; the 120 s timer and the shortcut both call it.
 
 ## `bash_output`
 

@@ -9,7 +9,7 @@
 import { createBashToolDefinition, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
-import { runForeground } from "./foreground.ts";
+import { foregroundRuns, runForeground } from "./foreground.ts";
 import { taskLine, stateText } from "./notify.ts";
 import { readOutput } from "./output.ts";
 import { attach, endSession, getRegistry, killTask, setContext, startTask } from "./registry.ts";
@@ -22,6 +22,17 @@ const BACKGROUND_DESCRIPTION =
 
 export default function (pi: ExtensionAPI): void {
 	attach(pi);
+	// The user can move the running foreground command to the background at once.
+	pi.registerShortcut("ctrl+shift+b", {
+		description: "Move the running foreground command to the background",
+		handler: (ctx) => {
+			setContext(ctx);
+			// One press promotes every foreground call in flight: with parallel tool
+			// calls the turn stays blocked until all finish, so several can be running
+			// at once (decided for ticket 06).
+			for (const run of foregroundRuns()) run.promote();
+		},
+	});
 	const builtin = createBashToolDefinition(process.cwd());
 	pi.registerTool({
 		...builtin,

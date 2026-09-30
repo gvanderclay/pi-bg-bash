@@ -45,21 +45,24 @@ type Sent = { message: { customType: string; content: string; display?: boolean 
 let counter = 0;
 
 /** One fake Pi session running the extension. */
-export function session(options: { id?: string } = {}) {
+export function session(options: { id?: string; hasUI?: boolean } = {}) {
 	const id = options.id ?? `session-${process.pid}-${++counter}`;
+	let uiEnabled = options.hasUI ?? true;
 	const tools: Record<string, Tool> = {};
 	const handlers: Record<string, Handler[]> = {};
 	const commands: Record<string, Command> = {};
 	const sent: Sent[] = [];
 	const statuses: { key: string; text: string | undefined }[] = [];
+	const widgets: { key: string; content: string[] | undefined; placement: string | undefined }[] = [];
+	const shortcuts: Record<string, { description?: string; handler: (ctx: unknown) => unknown }> = {};
 	/** What the user sees: `ui.select` prompts and `ui.notify` texts, and the script that answers `select`. */
 	const dialogs = {
 		selects: [] as { title: string; options: string[] }[],
 		notices: [] as string[],
 		answer: (_options: string[]) => undefined as string | undefined,
 	};
-	/** Switches for a stale context: `sendMessage` or `setStatus` throwing. */
-	const faults = { failSend: false, failFooter: false, sendAttempts: 0 };
+	/** Switches for a stale context: `sendMessage`, `setStatus` or the UI getters throwing. */
+	const faults = { failSend: false, failFooter: false, staleUI: false, sendAttempts: 0 };
 	const pi = {
 		on: (name: string, handler: Handler) => (handlers[name] ??= []).push(handler),
 		registerCommand: (name: string, command: Command) => {
@@ -68,30 +71,46 @@ export function session(options: { id?: string } = {}) {
 		registerTool: (tool: Tool) => {
 			tools[tool.name] = tool;
 		},
+		registerShortcut: (shortcut: string, options: { description?: string; handler: (ctx: unknown) => unknown }) => {
+			shortcuts[shortcut] = options;
+		},
 		sendMessage: (message: Sent["message"], opts: unknown) => {
 			faults.sendAttempts++;
 			if (faults.failSend) throw new Error("Extension runtime not initialized");
 			sent.push({ message, options: opts });
 		},
 	};
+	const ui = {
+		select: async (title: string, options: string[]) => {
+			dialogs.selects.push({ title, options });
+			return dialogs.answer(options);
+		},
+		notify: (message: string) => {
+			dialogs.notices.push(message);
+		},
+		setStatus: (key: string, text: string | undefined) => {
+			if (faults.failFooter) throw new Error("This extension ctx is stale");
+			statuses.push({ key, text });
+		},
+		setWidget: (key: string, content: string[] | undefined, options?: { placement?: string }) => {
+			widgets.push({ key, content, placement: options?.placement });
+		},
+	};
 	const ctx = {
 		cwd: root,
-		hasUI: true,
+		get hasUI() {
+			if (faults.staleUI) throw new Error("This extension ctx is stale");
+			return uiEnabled;
+		},
+		set hasUI(value: boolean) {
+			uiEnabled = value;
+		},
 		model: { provider: "test-provider", id: "test-model" } as { provider: string; id: string } | undefined,
 		thinkingLevel: "high" as string | undefined,
 		sessionManager: { getSessionId: () => id, getSessionFile: () => join(root, "sessions", `${id}.jsonl`) },
-		ui: {
-			select: async (title: string, options: string[]) => {
-				dialogs.selects.push({ title, options });
-				return dialogs.answer(options);
-			},
-			notify: (message: string) => {
-				dialogs.notices.push(message);
-			},
-			setStatus: (key: string, text: string | undefined) => {
-				if (faults.failFooter) throw new Error("This extension ctx is stale");
-				statuses.push({ key, text });
-			},
+		get ui() {
+			if (faults.staleUI) throw new Error("This extension ctx is stale");
+			return ui;
 		},
 	};
 	register(pi as never);
@@ -111,6 +130,14 @@ export function session(options: { id?: string } = {}) {
 		ctx,
 		sent,
 		statuses,
+		widgets,
+		shortcuts,
+		/** Fire a registered shortcut the way the TUI does, with this session's context. */
+		shortcut: (name: string) => {
+			const registered = shortcuts[name];
+			if (registered === undefined) throw new Error(`no shortcut registered for ${name}`);
+			return registered.handler(ctx);
+		},
 		/** One registered tool's definition. */
 		tool: (name: string) => tools[name],
 		/** Call a tool the way Pi does, with this session's context. */
@@ -300,6 +327,11 @@ export function fakeClock() {
 		advance,
 		/** Run `count` poller ticks. */
 		tick: (count = 1) => advance(count * POLL_MS),
+		/** Advance exactly `ms`, firing whatever falls inside, without the 100 ms step (for near-threshold assertions). */
+		tickMs: async (ms: number) => {
+			mock.timers.tick(ms);
+			await flush();
+		},
 		/** Advance until `done` holds; throws when it has not within `maxMs` of fake time. */
 		until: async (done: () => boolean, maxMs = 120_000) => {
 			for (let t = 0; t < maxMs && !done(); t += 100) await advance(100);

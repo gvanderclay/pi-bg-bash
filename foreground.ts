@@ -21,6 +21,11 @@ import { adopt, forgetGroup, getRegistry, launchGroup, makeTask, release, reserv
 
 /** How long a foreground command may run before it becomes a background task. */
 const PROMOTE_MS = 120_000;
+/** How long before the hint below the editor teaches the shortcut. */
+const HINT_MS = 2000;
+/** The hint widget's key and text; cleared when the call ends or is promoted. */
+const HINT_KEY = "pi-bg-bash-hint";
+const HINT_TEXT = "(ctrl+shift+b to background)";
 /** How often the log is read for new output and the marker. */
 const LOG_POLL_MS = 50;
 /** How long the log must stay idle after the exit marker before the call ends, so a late child's output is kept. */
@@ -125,8 +130,22 @@ function operations(ctx: ExtensionContext, run: Run) {
 				let timer: ReturnType<typeof setTimeout> | undefined;
 				let promoteTimer: ReturnType<typeof setTimeout> | undefined;
 				let lateTimer: ReturnType<typeof setTimeout> | undefined;
+				let hintTimer: ReturnType<typeof setTimeout> | undefined;
+				let hintShown = false;
 				let exitCode: number | null = null;
 				const poll: ReturnType<typeof setInterval> = setInterval(check, LOG_POLL_MS);
+				/** Drop the hint now: cancel its timer and clear a shown widget, without letting a stale context's UI getters escape. */
+				const clearHint = () => {
+					clearTimeout(hintTimer);
+					hintTimer = undefined;
+					if (!hintShown) return;
+					hintShown = false;
+					try {
+						if (ctx.hasUI) ctx.ui.setWidget(HINT_KEY, undefined);
+					} catch {
+						// the context went stale (session replaced or reloaded); the widget is gone with it
+					}
+				};
 				const finish = (settle: () => void) => {
 					if (done) return;
 					done = true;
@@ -134,6 +153,7 @@ function operations(ctx: ExtensionContext, run: Run) {
 					clearTimeout(timer);
 					clearTimeout(promoteTimer);
 					clearTimeout(lateTimer);
+					clearHint();
 					getRegistry().foreground.delete(handle);
 					signal?.removeEventListener("abort", onAbort);
 					settle();
@@ -156,8 +176,11 @@ function operations(ctx: ExtensionContext, run: Run) {
 						if (exit !== undefined) {
 							// The command ended; keep reading for a late background child's last
 							// writes until the log has been idle (Pi's bash does the same for
-							// inherited pipes, resetting the grace on new output).
+							// inherited pipes, resetting the grace on new output). The hint is
+							// gone the moment the marker is seen, so a fast command never flashes
+							// it during the grace, and a shown one is cleared at once.
 							exitCode = exit.code;
+							clearHint();
 							if (position > before || lateTimer === undefined) {
 								clearTimeout(lateTimer);
 								lateTimer = setTimeout(() => ended(() => resolve({ exitCode })), LATE_GRACE_MS);
@@ -211,6 +234,16 @@ function operations(ctx: ExtensionContext, run: Run) {
 				getRegistry().foreground.add(handle);
 				if (timeout !== undefined) timer = setTimeout(() => stop(new Error(`timeout:${timeout}`)), timeout * 1000);
 				if (promotable(command, timeout)) promoteTimer = setTimeout(promote, promoteMs());
+				if (ctx.hasUI)
+					hintTimer = setTimeout(() => {
+						try {
+							if (!ctx.hasUI) return;
+							hintShown = true;
+							ctx.ui.setWidget(HINT_KEY, [HINT_TEXT], { placement: "belowEditor" });
+						} catch {
+							// the context went stale before the hint fired; no widget, and the run still ends
+						}
+					}, HINT_MS);
 				// An abort that came while the process was being spawned is still an abort.
 				if (signal?.aborted) onAbort();
 				else signal?.addEventListener("abort", onAbort, { once: true });
