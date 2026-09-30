@@ -9,6 +9,7 @@ import { execFileSync, spawn } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, afterEach, describe, it } from "node:test";
+import { gunzipSync } from "node:zlib";
 
 import { createBashToolDefinition } from "@earendil-works/pi-coding-agent";
 
@@ -349,6 +350,24 @@ describe("the process port", () => {
 		assert.throws(() => process.kill(-pid, 0), { code: "EPERM" }, "the precondition: macOS answers EPERM for it");
 		assert.equal(realPort.groupAlive(pid), false);
 		assert.equal(realPort.signalGroup(pid, "SIGKILL"), false);
+	});
+});
+
+describe("the log limit", () => {
+	it("kills a task whose log passes the lowered limit, ends the log with the limit marker, and says so", { timeout: 20000 }, async (t) => {
+		process.env.PI_BG_BASH_LOG_LIMIT_BYTES = "1024";
+		t.after(() => delete process.env.PI_BG_BASH_LOG_LIMIT_BYTES);
+		const s = session();
+		const id = await start(s, "yes x | head -c 4096; sleep 60");
+		await waitFor(() => s.sent.length > 0, "the log-limit completion", 15000);
+		assert.match(s.sent[0].message.content, /finished: killed \(log limit passed\)/);
+		const task = getRegistry().tasks.get(id)!;
+		await waitFor(() => !realPort.groupAlive(task.pid), "the group's end", 5000);
+		const gz = join(s.logDir(), `${id}.log.gz`);
+		await waitFor(() => existsSync(gz), "the gzipped log", 5000);
+		const full = gunzipSync(readFileSync(gz)).toString("utf8");
+		assert.match(full, new RegExp(`\\n__PI_BG_LIMIT__:[0-9a-f]{16}\\n$`));
+		assert.doesNotMatch(full, /__PI_BG_EXIT__/);
 	});
 });
 

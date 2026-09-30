@@ -28,7 +28,15 @@ task id at once, and reports the result when the command exits.
 - **Logs:** `$XDG_STATE_HOME/pi-bg/<session-id>/<id>.log` (default
   `~/.local/state`), directory `0o700`, file `0o600`, created exclusively. Ids
   restart at `bg-1` per Pi process, so a resumed session skips any id whose
-  `.log` or `.log.gz` already exists.
+  `.log` or `.log.gz` already exists. Once a task's completion message has been
+  sent, the log is gzipped to `<id>.log.gz` (0600) with `node:zlib` and the
+  plain file is deleted; `bash_output` and the completion tail read it
+  transparently. A task is killed, with the message `killed (log limit passed)`
+  and a `__PI_BG_LIMIT__` marker ending its log, once its log passes 100 MiB;
+  `PI_BG_BASH_LOG_LIMIT_BYTES` lowers the limit for the contract test. At
+  `session_start`, logs and emptied session directories older than 7 days are
+  removed — never a running task's log, and never anything but the extension's
+  own `bg-<n>.log` / `.log.gz` files.
 - **Not honoured:** Pi's `shellPath` and `shellCommandPrefix` settings. An
   extension cannot read them, so neither background nor foreground commands
   use them.
@@ -42,9 +50,9 @@ task id at once, and reports the result when the command exits.
   retried on a later tick. A task is registered only after its spawn resolves.
 - **Completion message:** one `pi.sendMessage` custom message per task,
   `deliverAs: "followUp"`, `triggerTurn: true`, with the id, command, exit
-  state (`exited (code N)`, `killed (timed out)`, `killed (killed by user)`, or
-  `exit unknown`, the same wording as `bash_tasks`), runtime and the last ~20
-  lines of output.
+  state (`exited (code N)`, `killed (timed out)`, `killed (killed by user)`,
+  `killed (log limit passed)`, or `exit unknown`, the same wording as
+  `bash_tasks`), runtime and the last ~20 lines of output.
 - **Footer:** `ctx.ui.setStatus("bg", "bg: N")` while N tasks run.
 - A call without `background` is a foreground call; see below.
 
@@ -106,8 +114,8 @@ output kept.
 
 ## `bash_output`
 
-`bash_output({ id, latest?, filter? })` reads a task's log, running or
-finished.
+`bash_output({ id, latest?, filter? })` reads a task's log — plain or gzipped,
+running or finished.
 
 - Returns the oldest unread output from the task's read position, capped like
   Pi's `truncateHead` (`DEFAULT_MAX_LINES`, `DEFAULT_MAX_BYTES`), counted in raw bytes. When more
@@ -144,7 +152,7 @@ finished.
   runs on timers, so tests can drive it. Tests replace the port through the test
   harness only; there is no option or setting for it.
 - **How a kill is recorded:** a killed task has state `killed` and a `reason`
-  (`killed by agent`, `killed by user`, `timed out`) kept in the registry, and
+  (`killed by agent`, `killed by user`, `timed out`, `log limit passed`) kept in the registry, and
   reported as `killed (reason)` by `bash_tasks`, `bash_output` and the completion
   message. The group kill also takes the wrapper down, so no marker is written
   and the log's marker stays digits-only. Session end reports nothing (the tasks
@@ -227,7 +235,8 @@ route yet.
 test file, and `--test-timeout` makes a call that never settles fail the run
 instead of hanging it.
 
-- **Behaviour tests** (`background`, `foreground`, `kill`, `output`, `poller`): the extension
+- **Behaviour tests** (`background`, `foreground`, `kill`, `logs`, `output`,
+  `poller`): the extension
   runs over a scripted fake process table behind the process port, on
   `node:test` mock timers that start at the real now. The test decides when a
   task writes, exits (writing the marker with its nonce), traps SIGTERM, leaves a
@@ -247,5 +256,7 @@ instead of hanging it.
   `PI_BG_BASH_PROMOTE_MS`), quoting and heredocs, Pi's shell and environment, the
   marker and nonce (grandchild, spoofed marker, marker across a read window), the
   group kill (child, `trap '' TERM`), the errno mapping (including the macOS
-  zombie-only group, macOS only), spawn failures and exclusive log creation.
-  `PI_BG_BASH_GRACE_MS` shortens the kill's grace period.
+  zombie-only group, macOS only), spawn failures and exclusive log creation,
+  and the log limit (a task printing past `PI_BG_BASH_LOG_LIMIT_BYTES` is
+  killed with the `__PI_BG_LIMIT__` marker). `PI_BG_BASH_GRACE_MS` shortens the
+  kill's grace period.

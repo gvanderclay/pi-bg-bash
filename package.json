@@ -16,6 +16,7 @@
 		"foreground.ts",
 		"kill.ts",
 		"launch.ts",
+		"logs.ts",
 		"port.ts",
 		"registry.ts",
 		"logview.ts",

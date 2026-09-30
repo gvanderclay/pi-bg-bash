@@ -10,6 +10,7 @@ import { createBashToolDefinition, type ExtensionAPI } from "@earendil-works/pi-
 import { Type } from "typebox";
 
 import { foregroundRuns, runForeground } from "./foreground.ts";
+import { cleanupOldLogs } from "./logs.ts";
 import { taskLine, stateText } from "./notify.ts";
 import { readOutput } from "./output.ts";
 import { attach, endSession, getRegistry, killTask, setContext, startTask } from "./registry.ts";
@@ -134,7 +135,10 @@ export default function (pi: ExtensionAPI): void {
 			if (outcome === "leftover-stuck") ctx.ui.notify(`Task ${task.id}: the processes it left running survived SIGKILL and are still running.`, "warning");
 		},
 	});
-	pi.on("session_start", (_event, ctx) => setContext(ctx));
+	pi.on("session_start", (_event, ctx) => {
+		setContext(ctx);
+		cleanupOldLogs(getRegistry().tasks.values());
+	});
 	// Tasks belong to the session: a reload keeps them (the new load takes them over), every other end kills them.
 	pi.on("session_shutdown", async (event) => {
 		if (event.reason !== "reload") await endSession();

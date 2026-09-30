@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, afterEach, beforeEach, describe, it } from "node:test";
+import { gunzipSync } from "node:zlib";
 
 import { getRegistry } from "../registry.ts";
 import {
@@ -53,7 +54,7 @@ describe("a resumed session", () => {
 		const id = await start(second, "echo new-run");
 		assert.notEqual(id, oldId);
 		procs.of(id).write("new-run\n");
-		assert.match(readFileSync(join(second.logDir(), `${oldId}.log`), "utf8"), /old-run/);
+		assert.match(gunzipSync(readFileSync(join(second.logDir(), `${oldId}.log.gz`))).toString("utf8"), /old-run/);
 		await clock.tick(3);
 		assert.equal(second.sent.length, 0); // the old run's marker did not end it
 		procs.of(id).exit(0);

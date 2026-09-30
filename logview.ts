@@ -4,7 +4,8 @@
 // the command keeps writing after it. Offsets in this view ("virtual" offsets)
 // skip the marker's bytes, so read positions stay valid whether or not the
 // marker has appeared yet.
-import { closeSync, fstatSync, openSync, readSync } from "node:fs";
+import { closeSync, fstatSync, openSync, readFileSync, readSync } from "node:fs";
+import { gunzipSync } from "node:zlib";
 
 import type { Task } from "./registry.ts";
 
@@ -23,6 +24,10 @@ export function markerNeedle(nonce: string): Buffer {
 /** Find the task's marker in the log, scanning only what earlier calls had not. Throws when the log cannot be read. */
 export function locateMarker(task: Task): Marker | undefined {
 	if (task.marker !== undefined) return task.marker;
+	// A settled task (killed, exit unknown, or exited without a marker) can never
+	// gain a valid exit marker afterwards; skipping the scan also keeps a gzipped
+	// log from being opened as a plain one.
+	if (task.state !== "running") return undefined;
 	const needle = markerNeedle(task.nonce);
 	const overlap = needle.length + TAIL;
 	const fd = openSync(task.logPath, "r");
@@ -68,14 +73,15 @@ export type View = {
 };
 
 export function openView(task: Task): View {
+	if (task.logPath.endsWith(".gz")) return openGzView(task);
 	const fd = openSync(task.logPath, "r");
 	try {
 		// Size first, then the marker: a marker written in between lies past `physicalSize`.
 		const physicalSize = fstatSync(fd).size;
-		const marker = locateMarker(task);
-		const cut = marker === undefined ? 0 : marker.end - marker.start;
-		const size = marker === undefined ? physicalSize : Math.max(marker.start, physicalSize - cut);
-		const physical = (offset: number) => (marker !== undefined && offset >= marker.start ? offset + cut : offset);
+		const cut = cutRegion(task);
+		const cutLength = cut === undefined ? 0 : cut.end - cut.start;
+		const size = cut === undefined ? physicalSize : Math.max(cut.start, physicalSize - cutLength);
+		const physical = (offset: number) => (cut !== undefined && offset >= cut.start ? offset + cutLength : offset);
 		const raw = (start: number, end: number) => {
 			const buffer = Buffer.alloc(end - start);
 			readSync(fd, buffer, 0, buffer.length, start);
@@ -83,12 +89,12 @@ export function openView(task: Task): View {
 		};
 		return {
 			size,
-			marker,
+			marker: task.marker,
 			read(start, end) {
-				if (marker === undefined || end <= marker.start || start >= marker.start) {
+				if (cut === undefined || end <= cut.start || start >= cut.start) {
 					return raw(physical(start), physical(start) + (end - start));
 				}
-				return Buffer.concat([raw(start, marker.start), raw(marker.end, end + cut)]);
+				return Buffer.concat([raw(start, cut.start), raw(cut.end, end + cutLength)]);
 			},
 			close: () => closeSync(fd),
 		};
@@ -96,4 +102,32 @@ export function openView(task: Task): View {
 		closeSync(fd);
 		throw error;
 	}
+}
+
+/** The bytes the view cuts out: the exit marker, or the log-limit marker. */
+function cutRegion(task: Task): { start: number; end: number } | undefined {
+	const marker = locateMarker(task);
+	if (marker !== undefined) return marker;
+	return task.limitMarker;
+}
+
+/** A finished, gzipped log read whole into memory (the 100 MiB limit bounds it). */
+function openGzView(task: Task): View {
+	const buffer = gunzipSync(readFileSync(task.logPath));
+	const cut = cutRegion(task);
+	const cutLength = cut === undefined ? 0 : cut.end - cut.start;
+	const size = cut === undefined ? buffer.length : Math.max(cut.start, buffer.length - cutLength);
+	const physical = (offset: number) => (cut !== undefined && offset >= cut.start ? offset + cutLength : offset);
+	const raw = (start: number, end: number) => Buffer.from(buffer.subarray(start, end));
+	return {
+		size,
+		marker: task.marker,
+		read(start, end) {
+			if (cut === undefined || end <= cut.start || start >= cut.start) {
+				return raw(physical(start), physical(start) + (end - start));
+			}
+			return Buffer.concat([raw(start, cut.start), raw(cut.end, end + cutLength)]);
+		},
+		close: () => {},
+	};
 }

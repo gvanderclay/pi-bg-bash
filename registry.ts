@@ -11,6 +11,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import type { ForegroundRun } from "./foreground.ts";
 import { killGroup } from "./kill.ts";
 import { type LaunchOptions, sessionLogDir } from "./launch.ts";
+import { appendLimitMarker, gzipLog, overLogLimit } from "./logs.ts";
 import { locateMarker, type Marker } from "./logview.ts";
 import { sendCompletion } from "./notify.ts";
 import { processPort } from "./port.ts";
@@ -29,7 +30,7 @@ export type TaskState = "running" | "exited" | "exit-unknown" | "killed";
  * no marker is written: the registry records the reason itself, and the log's
  * marker stays digits-only.
  */
-export type KillReason = "killed by agent" | "killed by user" | "timed out";
+export type KillReason = "killed by agent" | "killed by user" | "timed out" | "log limit passed";
 
 export type Task = {
 	id: string;
@@ -41,6 +42,8 @@ export type Task = {
 	nonce: string;
 	/** Where the marker was found, once it has been. */
 	marker?: Marker;
+	/** Where the poller wrote the log-limit marker, so the view can cut it out. */
+	limitMarker?: { start: number; end: number };
 	/** Where the next marker search starts in the log. */
 	scanFrom: number;
 	startedAt: number;
@@ -290,11 +293,15 @@ function refresh(registry: Registry, task: Task): void {
 	updateFooter(registry);
 }
 
-/** One task's tick: settle it, enforce its deadline, then report it if it ended and is unreported. */
+/** One task's tick: settle it, enforce its deadline and the log limit, then report it if it ended and is unreported. */
 function pollTask(registry: Registry, task: Task): void {
 	if (task.killing !== undefined) return; // the kill reports it
 	refresh(registry, task);
 	if (task.state === "running") {
+		if (overLogLimit(task)) {
+			killForLogLimit(registry, task).catch(() => {}); // still running: the next tick asks again
+			return;
+		}
 		if (task.deadline !== undefined && Date.now() >= task.deadline) {
 			killTask(task, "timed out", { notify: true }).catch(() => {}); // still running: the next tick asks again
 		}
@@ -369,6 +376,35 @@ async function stopGroup(registry: Registry, task: Task, reason: KillReason, not
 	return how === "stopped" ? "killed" : how;
 }
 
+/**
+ * Stop a task whose log passed the size limit: kill the group first so the
+ * marker ends the log, write the `__PI_BG_LIMIT__` marker, record the reason,
+ * and report it as `killed (log limit passed)`. The kill is remembered on
+ * `task.killing` so later poller ticks do not start a second one.
+ */
+async function killForLogLimit(registry: Registry, task: Task): Promise<"killed" | "gone" | "stuck"> {
+	const stopping = (async () => {
+		const how = await killGroup(task.pid);
+		appendLimitMarker(task);
+		task.endedAt = Date.now();
+		task.state = "killed";
+		task.reason = "log limit passed";
+		updateFooter(registry);
+		try {
+			notifyOnce(registry, task);
+		} catch {
+			// a later tick retries the message
+		}
+		return how === "gone" ? "gone" : how === "stuck" ? "stuck" : "killed";
+	})();
+	task.killing = stopping;
+	const clear = () => {
+		task.killing = undefined;
+	};
+	stopping.then(clear, clear);
+	return stopping;
+}
+
 /** One poller tick. A failure in one task never stops the others or the timer. */
 function poll(registry: Registry): void {
 	for (const task of registry.tasks.values()) {
@@ -381,7 +417,7 @@ function poll(registry: Registry): void {
 	if (!hasPending(registry)) stopPoller(registry);
 }
 
-/** Report the task's end once: the flag is set before the send, and reset when the send throws so a later tick retries. */
+/** Report the task's end once: the flag is set before the send, and reset when the send throws so a later tick retries. The log is gzipped only after the message really went out (Q21); a gzip failure leaves the plain log and must not resend the message. */
 function notifyOnce(registry: Registry, task: Task): void {
 	if (task.notified || registry.pi === undefined) return;
 	task.notified = true;
@@ -390,5 +426,10 @@ function notifyOnce(registry: Registry, task: Task): void {
 	} catch (error) {
 		task.notified = false;
 		throw error;
+	}
+	try {
+		gzipLog(task);
+	} catch {
+		// the message is already out; the plain log stays readable
 	}
 }

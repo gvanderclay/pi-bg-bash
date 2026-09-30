@@ -1,9 +1,10 @@
 // Behaviour tier: starting a background task and the completion message, the
 // log's place and mode, the footer and the tool's schema.
 import assert from "node:assert/strict";
-import { readdirSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { after, afterEach, beforeEach, describe, it } from "node:test";
 import { join } from "node:path";
+import { gunzipSync } from "node:zlib";
 
 import { createBashToolDefinition } from "@earendil-works/pi-coding-agent";
 
@@ -12,7 +13,6 @@ import {
 	fakeClock,
 	fakeProcesses,
 	type FakeProcesses,
-	logText,
 	resetRegistry,
 	restoreProcesses,
 	root,
@@ -75,16 +75,16 @@ describe("bash with background: true", () => {
 		assert.match(s.sent[1].message.content, /\(no output\)$/);
 	});
 
-	it("keeps the log under pi-bg/<session>/<id>.log, private, ending with the exit marker", async () => {
+	it("gzipps the log after completion, keeping it private and ending with the exit marker", async () => {
 		const s = session();
 		const id = await start(s, "echo hi; exit 3");
 		procs.of(id).write("hi\n");
 		procs.of(id).exit(3);
 		await clock.until(() => s.sent.length > 0);
-		assert.deepEqual(readdirSync(s.logDir()), [`${id}.log`]);
+		assert.deepEqual(readdirSync(s.logDir()), [`${id}.log.gz`]);
 		assert.equal(statSync(s.logDir()).mode & 0o777, 0o700);
-		assert.equal(statSync(join(s.logDir(), `${id}.log`)).mode & 0o777, 0o600);
-		assert.match(logText(s, id), /^hi\n\n__PI_BG_EXIT__:[0-9a-f]{16}:3\n$/);
+		assert.equal(statSync(join(s.logDir(), `${id}.log.gz`)).mode & 0o777, 0o600);
+		assert.match(gunzipSync(readFileSync(join(s.logDir(), `${id}.log.gz`))).toString("utf8"), /^hi\n\n__PI_BG_EXIT__:[0-9a-f]{16}:3\n$/);
 	});
 
 	it("hands the launch the command, the working directory and Pi's session variables from the context", async () => {

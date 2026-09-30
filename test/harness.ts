@@ -123,6 +123,10 @@ export function session(options: { id?: string; hasUI?: boolean } = {}) {
 		shutdown: async (reason: "quit" | "reload" | "new" | "resume" | "fork") => {
 			for (const handler of handlers.session_shutdown ?? []) await handler({ type: "session_shutdown", reason }, ctx);
 		},
+		/** Emit `session_start` and wait for the handlers, as Pi does. */
+		sessionStart: async () => {
+			for (const handler of handlers.session_start ?? []) await handler({ type: "session_start" }, ctx);
+		},
 		/** Run a slash command the way Pi does, with this session's context. */
 		command: async (name: string, args = "") => commands[name].handler(args, ctx),
 		hasCommand: (name: string) => name in commands,
