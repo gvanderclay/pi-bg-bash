@@ -12,13 +12,17 @@ task id at once, and reports the result when the command exits.
   the session variables Pi's bash tool sets, taken from the context:
   `PI_SESSION_ID`, `PI_SESSION_FILE`, `PI_PROVIDER`, `PI_MODEL`,
   `PI_REASONING_LEVEL` (each left out when the context has no value; inherited
-  ones are cleared first, as Pi does). When
-  the command exits the wrapper appends `__PI_BG_EXIT__:<nonce>:<code>`. The
-  nonce is random per task and passed as an argument, so output that looks like
-  a marker is not one. The marker is found wherever it sits, since a
-  backgrounded grandchild may write after it, and is never shown as output.
-  The wrapper's own stderr is silenced (the command's still reaches the log), so
-  a shell job notice like `Killed: 9` for a command that killed itself is not output.
+  ones are cleared first, as Pi does). When the command exits the wrapper appends
+  `__PI_BG_EXIT__:<nonce>:<code>`. The nonce is random per task and passed as an
+  argument, so output that looks like a marker is not one. The marker is found
+  wherever it sits, since a backgrounded grandchild may write after it, and is
+  never shown as output. The wrapper's own stderr is silenced (the command's still
+  reaches the log), so a shell job notice like `Killed: 9` for a command that
+  killed itself is not output. A separate `sh` watcher, its own detached process
+  outside the task's group, is given Pi's pid and the task's group; it exits once
+  the group is empty, and when Pi dies first it appends `__PI_BG_GONE__:<nonce>`
+  and SIGKILLs whatever is left. A watcher that fails to start leaves the task
+  running without a crash watch (fail open).
 - **Spawn failures:** a missing working directory is refused with "Working
   directory does not exist"; a failed spawn rejects, and no log is left.
 - **Logs:** `$XDG_STATE_HOME/pi-bg/<session-id>/<id>.log` (default
@@ -59,8 +63,11 @@ the turn, including one that lands while the process is being spawned, sends
 SIGKILL to the command's process group at once, as Pi's bash does; only
 `bash_kill` and `/bg` use SIGTERM, then SIGKILL after the grace period. A
 foreground command that ends leaves no task and no log, and its id is given back.
-A command that vanishes without an exit marker ends the call with `Command
-terminated without an exit code`, its last output kept.
+After the exit marker the call keeps reading the log until it has been idle for
+100 ms (reset on new output), so a short-lived background child's last writes are
+kept, as Pi's bash keeps inherited-pipe output. A command that vanishes without an
+exit marker ends the call with `Command terminated without an exit code`, its last
+output kept.
 
 - **Promotion:** a command still running 120 s after it started, with no
   explicit `timeout` and not starting with `sleep`, becomes a task: the same live
@@ -126,8 +133,9 @@ finished.
   (`killed by agent`, `killed by user`, `timed out`) kept in the registry, and
   reported as `killed (reason)` by `bash_tasks`, `bash_output` and the completion
   message. The group kill also takes the wrapper down, so no marker is written
-  and the log's marker stays digits-only; later kinds of kill (session end, Pi
-  gone, log limit) add reasons the same way.
+  and the log's marker stays digits-only. Session end reports nothing (the tasks
+  are forgotten), and Pi-gone is written by the watcher as `__PI_BG_GONE__:`,
+  not as a registry reason.
 - `bash_tasks()`: one line per task, `id | state | runtime | command`. State is
   `running`, `exited (code N)`, `killed (reason)` or `exit unknown`. Says "No
   background tasks." when there are none.
@@ -142,8 +150,41 @@ finished.
   message saying `timed out`. Without a `timeout` a background task has none.
 - `/bg`: with a UI, `ctx.ui.select` over every task (same line as
   `bash_tasks`); picking a running task kills it and sends the completion
-  message saying `killed by user`, picking a finished one does nothing. Without
+  message saying `killed by user`; picking a finished one stops what it left
+  running, if anything, and tells you. Without
   a UI it prints the list with `ctx.ui.notify` and kills nothing.
+
+## Session lifetime
+
+Tasks belong to the session that started them.
+
+- **`/reload` keeps them.** Pi loads extensions with `moduleCache: false`, so a
+  reload runs a fresh copy of the extension. It finds the `globalThis` registry,
+  refreshes its `pi` reference and replaces the poller, so one poller runs and
+  completions go through the newest registration, once. A foreground command in
+  flight is left running too, and is still in `foregroundRuns()` (kept in the
+  registry, not in module state); when it outlasts the threshold it is promoted
+  as usual.
+- **`quit`, `new`, `resume` and `fork` kill everything** (`session_shutdown`,
+  awaited by Pi): the group kill (SIGTERM, grace, SIGKILL) on every task's group,
+  finished ones too since a `server &` outlives its command, on every foreground
+  command in flight, and on a spawn still under way, once it resolves. The
+  tasks are then forgotten and their completion is never reported, since the
+  session that wanted it is over.
+- **A crash or hard kill of Pi** is caught by a separate watcher, its own `sh`
+  process spawned detached outside the task's group right after the wrapper. It
+  is given Pi's pid and the task's group, checks both about once a second, and
+  exits when the group has emptied; when Pi is gone first and the group still
+  has members, it appends `__PI_BG_GONE__:<nonce>` to the log and SIGKILLs them.
+  So a `server &` a finished command left behind is covered here too, as well as
+  by session end and `bash_kill`/`/bg`. No Pi is left to read the GONE marker, so
+  `bash_output` does not know it. A watcher that fails to start leaves the task
+  running without a crash watch (fail open).
+- **`bash_kill` and a `/bg` pick on a task whose command has exited** run the
+  group kill when anything is left in its group and say so (`had already
+  finished: exited (code 0); stopped the processes it left running`, or that
+  they survived SIGKILL). An empty group gives "already finished" as before.
+  The task's state is not changed.
 
 Uses no `pi.events` hook.
 
@@ -179,11 +220,18 @@ instead of hanging it.
   child or a zombie group, dies without a marker or survives SIGKILL. Logs are
   real files under a temporary `XDG_STATE_HOME`. `clock.settle(call)` ticks the
   clock until a call settles; no test awaits a timer-driven call without it.
+- **Lifetime** (`lifetime`, behaviour tier): reload hand-over and the single
+  poller, session-end kills (finished tasks, foreground in flight, pending
+  spawn), the finished-task kill, and the pid-reuse guard.
 - **Contract tests** (`contract`): the real port with short real `sh` commands
-  on real time and no mock timers: foreground parity with Pi's bash and a real
-  promotion (`PI_BG_BASH_PROMOTE_MS`, set in that one test; it waits for the
-  poller's 2 s tick to see the completion message), quoting and heredocs, Pi's shell and
-  environment, the marker and nonce (grandchild, spoofed marker, marker across
-  a read window), the group kill (child, `trap '' TERM`), the errno mapping
-  (including the macOS zombie-only group, macOS only), spawn failures and
-  exclusive log creation. `PI_BG_BASH_GRACE_MS` shortens the kill's grace period.
+  on real time and no mock timers. The Pi-gone watch runs against a stand-in
+  `sleep` as Pi's pid: a task dies when it is killed, a task stays alive past one
+  watch period while Pi lives, and a child a finished command left behind dies
+  with the GONE marker. Also covered: the watcher's default Pi pid and its exit
+  once the group empties, a real session end, foreground parity with Pi's bash
+  (including late output after the marker and a real promotion via
+  `PI_BG_BASH_PROMOTE_MS`), quoting and heredocs, Pi's shell and environment, the
+  marker and nonce (grandchild, spoofed marker, marker across a read window), the
+  group kill (child, `trap '' TERM`), the errno mapping (including the macOS
+  zombie-only group, macOS only), spawn failures and exclusive log creation.
+  `PI_BG_BASH_GRACE_MS` shortens the kill's grace period.

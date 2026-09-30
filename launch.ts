@@ -2,7 +2,9 @@
 // detached so it leads its own process group, with stdout and stderr on the
 // log's file descriptor. The command travels as an argument, never inside the
 // wrapper text, so quotes, `#`, `$` and heredocs reach `sh` as written. When
-// the command exits the wrapper appends the marker line that ends the log.
+// the command exits the wrapper appends the marker line that ends the log. A
+// separate watcher, its own detached process outside the task's group, kills
+// whatever the command left running when Pi dies (see `WATCH`).
 import { spawn } from "node:child_process";
 import { accessSync, chmodSync, closeSync, constants, mkdirSync, openSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
@@ -11,14 +13,30 @@ import { delimiter, join } from "node:path";
 import * as pi from "@earendil-works/pi-coding-agent";
 
 /**
- * The wrapper. `$1` is the command, `$2` the task's nonce, the rest the shell
- * and its arguments. It runs the command in that shell, then appends the marker
- * line, which carries the nonce so only this wrapper can write a valid one.
- * The wrapper's own stderr is silenced, so a job notice such as "Killed: 9" for a
- * command that killed itself stays out of the log; the command's stderr still
- * goes to the log, through fd 3, which the command does not inherit.
+ * The wrapper. `$1` is the command, `$2` the task's nonce, `$3` Pi's pid (unused
+ * here; the watcher reads it), the rest the shell and its arguments. It runs the
+ * command in that shell, then appends the marker line, which carries the nonce so
+ * only this wrapper can write a valid one. The wrapper's own stderr is silenced,
+ * so a job notice such as "Killed: 9" for a command that killed itself stays out of
+ * the log; the command's stderr still goes to the log, through fd 3, which the
+ * command does not inherit.
  */
-const WRAPPER = 'cmd=$1; nonce=$2; shift 2; exec 3>&2 2>/dev/null; "$@" "$cmd" 2>&3 3>&-; code=$?; printf "\\n__PI_BG_EXIT__:%s:%s\\n" "$nonce" "$code"';
+const WRAPPER = [
+	"cmd=$1; nonce=$2; shift 3; exec 3>&2 2>/dev/null",
+	'"$@" "$cmd" 2>&3 3>&-; code=$?',
+	'printf "\\n__PI_BG_EXIT__:%s:%s\\n" "$nonce" "$code"',
+].join("\n");
+
+/**
+ * The Pi-gone watcher: its own detached process outside the task's group (spec
+ * Q34). `$1` is Pi's pid, `$2` the task's group, `$3` the nonce. It loops while
+ * Pi lives, exiting when the group has no members left (`kill -s 0 -- -grp`;
+ * EPERM/failure mean empty). When Pi is gone and the group still has members it
+ * appends the GONE marker and SIGKILLs the group. `kill -s 0` works in dash and
+ * bash 3.2; `kill -0 "$pi"` works in both too.
+ */
+const WATCH =
+	'pi=$1; grp=$2; nonce=$3; exec 2>/dev/null; while kill -0 "$pi"; do kill -s 0 -- "-$grp" || exit 0; sleep 1; done; kill -s 0 -- "-$grp" || exit 0; printf "\\n__PI_BG_GONE__:%s\\n" "$nonce"; kill -s KILL -- "-$grp"';
 
 /** `$XDG_STATE_HOME/pi-bg`, by default `~/.local/state/pi-bg`. */
 export function stateRoot(): string {
@@ -80,6 +98,8 @@ export type LaunchOptions = {
 	nonce: string;
 	/** Overrides `resolveShell()`, for a caller that already has Pi's environment. */
 	shell?: Shell;
+	/** The pid the watcher watches: when it is gone the watcher kills the task's group. Default: this process. */
+	piPid?: number;
 	/** Pi's per-session variables for the command; the same names inherited from `env` are dropped first. */
 	sessionEnv?: Record<string, string>;
 };
@@ -106,7 +126,7 @@ export async function launch(options: LaunchOptions): Promise<number> {
 	// Exclusive: a log that already exists belongs to an earlier run and must not be appended to.
 	const fd = openSync(logPath, "wx", 0o600);
 	try {
-		const child = spawn("sh", ["-c", WRAPPER, "pi-bg", command, nonce, shell, ...args], {
+		const child = spawn("sh", ["-c", WRAPPER, "pi-bg", command, nonce, String(options.piPid ?? process.pid), shell, ...args], {
 			cwd,
 			env,
 			detached: true,
@@ -119,6 +139,16 @@ export async function launch(options: LaunchOptions): Promise<number> {
 		child.on("error", () => {}); // a later error must not become an uncaught exception
 		child.unref();
 		if (child.pid === undefined) throw new Error(`could not start the shell for ${JSON.stringify(command)}`);
+		// The watcher outlives the command while its group has members, and kills them
+		// when Pi dies. It fails open: a watcher that cannot start leaves the task
+		// running without a crash watch, never failing the task itself.
+		try {
+			const watcher = spawn("sh", ["-c", WATCH, "pi-bg-watch", String(options.piPid ?? process.pid), String(child.pid), nonce], { detached: true, stdio: ["ignore", fd, fd] });
+			watcher.on("error", () => {}); // the async "error" event is the same fail-open path
+			watcher.unref();
+		} catch {
+			// spawn threw synchronously: the task still runs, unprotected.
+		}
 		return child.pid;
 	} catch (error) {
 		rmSync(logPath, { force: true });

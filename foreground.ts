@@ -9,20 +9,22 @@
 // abort signal stops reaching the process, and no more output flows to the call.
 // Every running call is in `foregroundRuns()` with a `promote` handle: that is
 // the one promotion path, for the timer here and for any other trigger.
-import { closeSync, openSync, readSync, rmSync, statSync } from "node:fs";
+import { rmSync } from "node:fs";
 
 import { type BashOperations, createBashToolDefinition, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import { killGroupNow } from "./kill.ts";
 import { resolveShell, SESSION_ENV_KEYS } from "./launch.ts";
-import { locateMarker, markerNeedle } from "./logview.ts";
+import { openView, type View, markerNeedle } from "./logview.ts";
 import { processPort } from "./port.ts";
-import { adopt, makeTask, release, reserve, type Task } from "./registry.ts";
+import { adopt, forgetGroup, getRegistry, launchGroup, makeTask, release, reserve, type Task } from "./registry.ts";
 
 /** How long a foreground command may run before it becomes a background task. */
 const PROMOTE_MS = 120_000;
 /** How often the log is read for new output and the marker. */
 const LOG_POLL_MS = 50;
+/** How long the log must stay idle after the exit marker before the call ends, so a late child's output is kept. */
+const LATE_GRACE_MS = 100;
 /** Pi's longest `timeout`, in milliseconds (`MAX_TIMEOUT_MS` in its bash tool). */
 const MAX_TIMEOUT_MS = 2_147_483_647;
 
@@ -35,11 +37,9 @@ export type ForegroundRun = {
 	promote(): void;
 };
 
-const active = new Set<ForegroundRun>();
-
-/** The foreground calls running now, not yet promoted or ended. */
+/** The foreground calls running now, not yet promoted or ended. Kept in the registry so a reloaded copy of this module sees them. */
 export function foregroundRuns(): ReadonlySet<ForegroundRun> {
-	return active;
+	return getRegistry().foreground;
 }
 
 /** Pi's `resolveTimeoutMs`: the same bounds and the same error text. */
@@ -91,7 +91,7 @@ function operations(ctx: ExtensionContext, run: Run) {
 			const shell = env === undefined ? undefined : { ...resolveShell(), env };
 			let pid: number;
 			try {
-				pid = await port.launch({ command, cwd, logPath, nonce, shell, sessionEnv });
+				pid = await launchGroup({ command, cwd, logPath, nonce, shell, sessionEnv });
 			} catch (error) {
 				release(reservation);
 				throw error;
@@ -99,34 +99,33 @@ function operations(ctx: ExtensionContext, run: Run) {
 			const startedAt = Date.now();
 			const task = makeTask(reservation, { command, cwd, pid, startedAt });
 			let position = 0;
-			/** Feed everything new in the log, up to the marker, to `onData`; the marker's exit code once it has appeared. */
+			/** Feed everything new in the log (the marker cut out) to `onData`; the marker's exit code once it has appeared. */
 			const pump = (last = false): { code: number } | undefined => {
-				let marker;
+				let view: View;
 				try {
-					marker = locateMarker(task);
+					view = openView(task);
 				} catch {
-					marker = undefined;
+					return undefined; // a log that cannot be read yields no output and no marker now
 				}
-				const size = marker?.start ?? (() => { try { return statSync(logPath).size; } catch { return position; } })();
-				if (size > position) {
-					const data = Buffer.alloc(size - position);
-					const fd = openSync(logPath, "r");
-					try {
-						readSync(fd, data, 0, data.length, position);
-					} finally {
-						closeSync(fd);
+				try {
+					if (view.size > position) {
+						const data = view.read(position, view.size);
+						const keep = view.marker === undefined ? heldBack(data, nonce, last) : 0;
+						if (data.length > keep) onData(data.subarray(0, data.length - keep));
+						position += data.length - keep;
 					}
-					const keep = marker === undefined ? heldBack(data, nonce, last) : 0;
-					if (data.length > keep) onData(data.subarray(0, data.length - keep));
-					position += data.length - keep;
+					return view.marker === undefined ? undefined : { code: view.marker.code };
+				} finally {
+					view.close();
 				}
-				return marker === undefined ? undefined : { code: marker.code };
 			};
 			return new Promise((resolve, reject) => {
 				let done = false;
 				const handle: ForegroundRun = { command, startedAt, promote };
 				let timer: ReturnType<typeof setTimeout> | undefined;
 				let promoteTimer: ReturnType<typeof setTimeout> | undefined;
+				let lateTimer: ReturnType<typeof setTimeout> | undefined;
+				let exitCode: number | null = null;
 				const poll: ReturnType<typeof setInterval> = setInterval(check, LOG_POLL_MS);
 				const finish = (settle: () => void) => {
 					if (done) return;
@@ -134,13 +133,15 @@ function operations(ctx: ExtensionContext, run: Run) {
 					clearInterval(poll);
 					clearTimeout(timer);
 					clearTimeout(promoteTimer);
-					active.delete(handle);
+					clearTimeout(lateTimer);
+					getRegistry().foreground.delete(handle);
 					signal?.removeEventListener("abort", onAbort);
 					settle();
 				};
 				/** The command is over: drop its log, give its id back, and settle. */
 				const ended = (settle: () => void) =>
 					finish(() => {
+						forgetGroup(pid);
 						rmSync(logPath, { force: true });
 						release(reservation);
 						settle();
@@ -150,9 +151,18 @@ function operations(ctx: ExtensionContext, run: Run) {
 					try {
 						// Liveness first: the wrapper writes the marker before it exits.
 						const alive = port.pidAlive(pid);
+						const before = position;
 						const exit = pump();
-						if (exit !== undefined) ended(() => resolve({ exitCode: exit.code }));
-						else if (!alive) {
+						if (exit !== undefined) {
+							// The command ended; keep reading for a late background child's last
+							// writes until the log has been idle (Pi's bash does the same for
+							// inherited pipes, resetting the grace on new output).
+							exitCode = exit.code;
+							if (position > before || lateTimer === undefined) {
+								clearTimeout(lateTimer);
+								lateTimer = setTimeout(() => ended(() => resolve({ exitCode })), LATE_GRACE_MS);
+							}
+						} else if (!alive) {
 							// Gone without a marker: whatever it wrote last is still output.
 							const last = pump(true);
 							ended(() => resolve({ exitCode: last?.code ?? null }));
@@ -165,6 +175,7 @@ function operations(ctx: ExtensionContext, run: Run) {
 				const stop = (error: Error) => {
 					if (done) return;
 					finish(() => {
+						forgetGroup(pid);
 						killGroupNow(pid).then(
 							() => {
 								try {
@@ -187,7 +198,7 @@ function operations(ctx: ExtensionContext, run: Run) {
 				function promote() {
 					if (done) return;
 					check(); // a command that just ended ends normally
-					if (done) return;
+					if (done || exitCode !== null) return;
 					finish(() => {
 						pump(true);
 						// The call shows the output up to here; `bash_output` goes on after it.
@@ -197,7 +208,7 @@ function operations(ctx: ExtensionContext, run: Run) {
 						resolve({ exitCode: 0 });
 					});
 				}
-				active.add(handle);
+				getRegistry().foreground.add(handle);
 				if (timeout !== undefined) timer = setTimeout(() => stop(new Error(`timeout:${timeout}`)), timeout * 1000);
 				if (promotable(command, timeout)) promoteTimer = setTimeout(promote, promoteMs());
 				// An abort that came while the process was being spawned is still an abort.

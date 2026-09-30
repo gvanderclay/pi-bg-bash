@@ -12,7 +12,7 @@ import { Type } from "typebox";
 import { runForeground } from "./foreground.ts";
 import { taskLine, stateText } from "./notify.ts";
 import { readOutput } from "./output.ts";
-import { attach, getRegistry, killTask, setContext, startTask } from "./registry.ts";
+import { attach, endSession, getRegistry, killTask, setContext, startTask } from "./registry.ts";
 
 const BACKGROUND_DESCRIPTION =
 	"Set `background: true` to start the command detached and return a task id at once; " +
@@ -97,9 +97,13 @@ export default function (pi: ExtensionAPI): void {
 					? `Task ${task.id} has already finished: ${stateText(task)}.`
 					: outcome === "gone"
 						? `Task ${task.id} had already ended: exit unknown.`
-						: outcome === "stuck"
-							? `Task ${task.id} was sent SIGKILL, but its process group is still running.`
-							: `Task ${task.id} killed; its process group is gone.`;
+						: outcome === "cleared"
+							? `Task ${task.id} had already finished: ${stateText(task)}; stopped the processes it left running.`
+							: outcome === "leftover-stuck"
+								? `Task ${task.id} had already finished: ${stateText(task)}; the processes it left running survived SIGKILL and are still running.`
+								: outcome === "stuck"
+									? `Task ${task.id} was sent SIGKILL, but its process group is still running.`
+									: `Task ${task.id} killed; its process group is gone.`;
 			return { content: [{ type: "text", text }], details: undefined };
 		},
 	});
@@ -113,8 +117,15 @@ export default function (pi: ExtensionAPI): void {
 			if (!ctx.hasUI) return ctx.ui.notify(lines.join("\n"), "info");
 			const choice = await ctx.ui.select("Background tasks (pick a running one to kill it)", lines);
 			const task = choice === undefined ? undefined : tasks[lines.indexOf(choice)];
-			if (task?.state === "running") await killTask(task, "killed by user", { notify: true });
+			if (task === undefined) return;
+			const outcome = await killTask(task, "killed by user", { notify: true });
+			if (outcome === "cleared") ctx.ui.notify(`Task ${task.id}: stopped the processes it left running.`, "info");
+			if (outcome === "leftover-stuck") ctx.ui.notify(`Task ${task.id}: the processes it left running survived SIGKILL and are still running.`, "warning");
 		},
 	});
 	pi.on("session_start", (_event, ctx) => setContext(ctx));
+	// Tasks belong to the session: a reload keeps them (the new load takes them over), every other end kills them.
+	pi.on("session_shutdown", async (event) => {
+		if (event.reason !== "reload") await endSession();
+	});
 }

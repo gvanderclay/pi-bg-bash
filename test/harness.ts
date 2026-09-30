@@ -100,6 +100,10 @@ export function session(options: { id?: string } = {}) {
 		id,
 		faults,
 		dialogs,
+		/** Emit `session_shutdown` with `reason` and wait for the handlers, as Pi does. */
+		shutdown: async (reason: "quit" | "reload" | "new" | "resume" | "fork") => {
+			for (const handler of handlers.session_shutdown ?? []) await handler({ type: "session_shutdown", reason }, ctx);
+		},
 		/** Run a slash command the way Pi does, with this session's context. */
 		command: async (name: string, args = "") => commands[name].handler(args, ctx),
 		hasCommand: (name: string) => name in commands,
@@ -325,6 +329,10 @@ export function resetRegistry(): void {
 	// The port maps ESRCH and the macOS zombie-only-group EPERM to "gone".
 	for (const task of registry.tasks.values()) processPort().signalGroup(task.pid, "SIGKILL");
 	registry.tasks.clear();
+	registry.groups.clear();
+	registry.emptyGroups.clear();
+	registry.launching.clear();
+	registry.foreground.clear();
 	registry.nextId = 1;
 	registry.ctx = undefined;
 }

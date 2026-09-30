@@ -8,8 +8,9 @@ import { join } from "node:path";
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
+import type { ForegroundRun } from "./foreground.ts";
 import { killGroup } from "./kill.ts";
-import { sessionLogDir } from "./launch.ts";
+import { type LaunchOptions, sessionLogDir } from "./launch.ts";
 import { locateMarker, type Marker } from "./logview.ts";
 import { sendCompletion } from "./notify.ts";
 import { processPort } from "./port.ts";
@@ -26,8 +27,7 @@ export type TaskState = "running" | "exited" | "exit-unknown" | "killed";
 /**
  * Why the registry killed a task. A kill takes the wrapper down with the group, so
  * no marker is written: the registry records the reason itself, and the log's
- * marker stays digits-only. Session end and Pi-gone kills (ticket 04) and the
- * log-limit kill (ticket 07) add their reasons here.
+ * marker stays digits-only.
  */
 export type KillReason = "killed by agent" | "killed by user" | "timed out";
 
@@ -53,6 +53,8 @@ export type Task = {
 	deadline?: number;
 	/** The group kill in progress, so a second request joins it. */
 	killing?: Promise<"killed" | "gone" | "stuck">;
+	/** The kill of what an ended task left running (Q32), so a second request joins it. */
+	clearing?: Promise<Leftovers>;
 	/** Where `bash_output` will next read; the completion tail never moves it. */
 	readPosition: number;
 	notified: boolean;
@@ -66,12 +68,75 @@ type Registry = {
 	pi?: ExtensionAPI;
 	ctx?: ExtensionContext;
 	poller?: ReturnType<typeof setInterval>;
+	/** Wrapper pids of every group launched here and not yet given up, for the session-end kill. */
+	groups: Set<number>;
+	/** Pids whose group the poller saw empty after the marker: never signal these again (the pid may be reused). */
+	emptyGroups: Set<number>;
+	/** One gate per spawn under way; it opens once the spawn's pid is in `groups`. */
+	launching: Set<Promise<void>>;
+	/** Foreground calls in flight. Here, not in `foreground.ts`, so a reloaded copy of it sees them. */
+	foreground: Set<ForegroundRun>;
 };
+
+/** What became of the processes an ended task left in its group. */
+export type Leftovers = "none" | "stopped" | "stuck";
 
 /** The one registry of this Pi process. */
 export function getRegistry(): Registry {
 	const holder = globalThis as unknown as Record<symbol, Registry | undefined>;
-	return (holder[KEY] ??= { tasks: new Map(), nextId: 1 });
+	const registry = (holder[KEY] ??= { tasks: new Map(), nextId: 1, groups: new Set(), emptyGroups: new Set(), launching: new Set(), foreground: new Set() });
+	// A registry left by an older copy of the extension may lack later fields.
+	registry.groups ??= new Set();
+	registry.emptyGroups ??= new Set();
+	registry.launching ??= new Set();
+	registry.foreground ??= new Set();
+	return registry;
+}
+
+/**
+ * Start a task through the process port and remember its group for the session-end kill.
+ * The gate lets `endSession` wait for a spawn under way and then kill it too.
+ */
+export async function launchGroup(options: LaunchOptions): Promise<number> {
+	const registry = getRegistry();
+	let open!: () => void;
+	const gate = new Promise<void>((resolve) => (open = resolve));
+	registry.launching.add(gate);
+	try {
+		const pid = await processPort().launch(options);
+		registry.groups.add(pid);
+		return pid;
+	} finally {
+		registry.launching.delete(gate);
+		open();
+	}
+}
+
+/** Stop remembering a group for the session-end kill: the foreground call it led ended (leftovers, if any, are no longer tracked, as with Pi's own bash). */
+export function forgetGroup(pid: number): void {
+	getRegistry().groups.delete(pid);
+}
+
+/**
+ * The session is over (quit, new, resume, fork; not reload): kill the group of every task,
+ * finished ones included since a `server &` outlives its command, and of every foreground
+ * command in flight, after any spawn under way has resolved. The tasks are then forgotten:
+ * they belonged to the session that ended, and their completion is never reported.
+ */
+export async function endSession(): Promise<void> {
+	const registry = getRegistry();
+	stopPoller(registry);
+	while (registry.launching.size > 0) await Promise.all([...registry.launching]);
+	const tasks = [...registry.tasks.values()];
+	// No completion may leak into the next session from a kill still in flight
+	// (a /bg pick or a deadline kill), so mark every task reported before clearing.
+	for (const task of tasks) task.notified = true;
+	const pids = new Set([...registry.groups, ...tasks.map((task) => task.pid)].filter((pid) => !registry.emptyGroups.has(pid)));
+	registry.groups.clear();
+	registry.emptyGroups.clear();
+	registry.tasks.clear();
+	updateFooter(registry);
+	await Promise.allSettled([...pids].map((pid) => killGroup(pid)));
 }
 
 /** A fresh load: use this `pi` and context from now on, and replace the poller. */
@@ -158,7 +223,7 @@ export async function startTask(command: string, ctx: ExtensionContext, options:
 	getRegistry().ctx = ctx;
 	const reservation = reserve(ctx.sessionManager.getSessionId());
 	const { logPath, nonce } = reservation;
-	const pid = await processPort().launch({ command, cwd: ctx.cwd, logPath, nonce, sessionEnv: sessionEnv(ctx) });
+	const pid = await launchGroup({ command, cwd: ctx.cwd, logPath, nonce, sessionEnv: sessionEnv(ctx) });
 	return adopt(makeTask(reservation, { command, cwd: ctx.cwd, pid, startedAt: Date.now(), timeout: options.timeout }));
 }
 
@@ -218,6 +283,10 @@ function refresh(registry: Registry, task: Task): void {
 	task.endedAt = Date.now();
 	task.state = marker === undefined ? "exit-unknown" : "exited";
 	task.exitCode = marker?.code;
+	// A group known empty can no longer hold the wrapper's pid: record it so a
+	// later session-end kill or Q32 never signals a pid the OS has reused. A
+	// leftover group keeps the pid, so tasks with leftovers stay covered.
+	if (marker !== undefined && !processPort().groupAlive(task.pid)) registry.emptyGroups.add(task.pid);
 	updateFooter(registry);
 }
 
@@ -236,19 +305,29 @@ function pollTask(registry: Registry, task: Task): void {
 
 /**
  * Stop a task's process group and record why. Resolves `finished` when the task had
- * already ended (a marker the poller had not yet seen counts), `gone` when its group
- * was already gone with no marker, `killed` once it is gone, `stuck` when it
- * survived SIGKILL. With `notify` false (the agent
- * asked, so it knows) no completion message is sent; otherwise the normal one is,
- * once the group is gone.
+ * already ended and left nothing (a marker the poller had not yet seen counts),
+ * `gone` when its group was already gone with no marker, `killed` once it is gone,
+ * `stuck` when it survived SIGKILL, `cleared` when what an ended task left running
+ * was stopped, and `leftover-stuck` when that survived SIGKILL. With `notify` false
+ * (the agent asked, so it knows) no completion message is sent; otherwise the normal
+ * one is, once the group is gone.
  */
-export async function killTask(task: Task, reason: KillReason, options: { notify: boolean }): Promise<"finished" | "gone" | "killed" | "stuck"> {
+export async function killTask(
+	task: Task,
+	reason: KillReason,
+	options: { notify: boolean },
+): Promise<"finished" | "gone" | "killed" | "stuck" | "cleared" | "leftover-stuck"> {
 	const registry = getRegistry();
 	if (task.killing === undefined) {
 		refresh(registry, task);
 		if (task.state !== "running") {
 			if (!options.notify) task.notified = true;
-			return "finished";
+			// Q32: an ended task's command may have left processes in its group.
+			task.clearing ??= stopLeftovers(task).finally(() => {
+				task.clearing = undefined;
+			});
+			const left = await task.clearing;
+			return left === "none" ? "finished" : left === "stopped" ? "cleared" : "leftover-stuck";
 		}
 		const stopping = stopGroup(registry, task, reason, options.notify);
 		task.killing = stopping;
@@ -259,6 +338,15 @@ export async function killTask(task: Task, reason: KillReason, options: { notify
 	}
 	if (!options.notify) task.notified = true;
 	return task.killing;
+}
+
+/** Stop what an ended task left in its process group. The task's own state is not touched: it did end when it says. */
+async function stopLeftovers(task: Task): Promise<Leftovers> {
+	// A group the poller already saw empty is skipped outright: its pid may have
+	// been reused by an unrelated group, which must not be signalled.
+	if (getRegistry().emptyGroups.has(task.pid) || !processPort().groupAlive(task.pid)) return "none";
+	const how = await killGroup(task.pid);
+	return how === "gone" ? "none" : how === "stopped" ? "stopped" : "stuck";
 }
 
 async function stopGroup(registry: Registry, task: Task, reason: KillReason, notify: boolean): Promise<"killed" | "gone" | "stuck"> {

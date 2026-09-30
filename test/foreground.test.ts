@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { after, afterEach, beforeEach, describe, it } from "node:test";
+import { after, afterEach, beforeEach, describe, it, mock } from "node:test";
 
 import { createBashToolDefinition } from "@earendil-works/pi-coding-agent";
 
@@ -31,6 +31,47 @@ after(cleanup);
 async function launched(index = 0) {
 	await clock.until(() => procs.all.length > index);
 	return procs.all[index];
+}
+
+/** Run pending microtasks after a manual clock tick. */
+const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+/** Wrap the mocked timer globals to track which timer and interval ids are still pending. */
+function trackTimers() {
+	const pending = new Set<unknown>();
+	const originals = {
+		setInterval: globalThis.setInterval,
+		clearInterval: globalThis.clearInterval,
+		setTimeout: globalThis.setTimeout,
+		clearTimeout: globalThis.clearTimeout,
+	};
+	globalThis.setInterval = ((callback: (...args: never[]) => void, ms?: number) => {
+		const id = originals.setInterval(callback as never, ms as never);
+		pending.add(id);
+		return id;
+	}) as typeof setInterval;
+	globalThis.setTimeout = ((callback: (...args: never[]) => void, ms?: number) => {
+		const id = originals.setTimeout(callback as never, ms as never);
+		pending.add(id);
+		return id;
+	}) as typeof setTimeout;
+	globalThis.clearInterval = ((id: unknown) => {
+		pending.delete(id);
+		originals.clearInterval(id as never);
+	}) as typeof clearInterval;
+	globalThis.clearTimeout = ((id: unknown) => {
+		pending.delete(id);
+		originals.clearTimeout(id as never);
+	}) as typeof clearTimeout;
+	return {
+		pending,
+		restore: () => {
+			globalThis.setInterval = originals.setInterval;
+			globalThis.clearInterval = originals.clearInterval;
+			globalThis.setTimeout = originals.setTimeout;
+			globalThis.clearTimeout = originals.clearTimeout;
+		},
+	};
 }
 
 describe("a foreground bash call that finishes", () => {
@@ -107,6 +148,66 @@ describe("a foreground bash call whose end arrives oddly", () => {
 		proc.write("0\n");
 		proc.die();
 		assert.equal(text(await clock.settle(call)), "out\n");
+	});
+
+	it("keeps output a short-lived child writes after the exit marker", async () => {
+		const s = session();
+		const call = s.toolCall("bash", { command: "slow-build" });
+		const proc = await launched();
+		proc.write("main\n");
+		proc.exit(0);
+		proc.write("late\n"); // a background child's last write, after the marker
+		assert.equal(text(await clock.settle(call)), "main\nlate\n");
+	});
+
+	it("keeps output written after a poll has seen the marker", async () => {
+		const s = session();
+		const call = s.toolCall("bash", { command: "slow-build" });
+		const proc = await launched();
+		proc.write("main\n");
+		proc.exit(0);
+		// Let one log poll see the marker and arm the grace, then write late.
+		mock.timers.tick(50);
+		await flush();
+		proc.write("late\n");
+		assert.equal(text(await clock.settle(call)), "main\nlate\n");
+	});
+
+	it("resets the grace on each new chunk, keeping them all", async () => {
+		const s = session();
+		let settled = false;
+		const call = s.toolCall("bash", { command: "slow-build" }).finally(() => (settled = true));
+		const proc = await launched();
+		proc.write("start\n");
+		proc.exit(0);
+		for (let i = 1; i <= 3; i++) {
+			mock.timers.tick(60);
+			await flush();
+			proc.write(`chunk${i}\n`);
+		}
+		// Still running 100 ms after the last chunk: each write reset the grace.
+		mock.timers.tick(100);
+		await flush();
+		assert.equal(settled, false, "the call must not finish before the last chunk + 100 ms");
+		assert.equal(text(await clock.settle(call)), "start\nchunk1\nchunk2\nchunk3\n");
+	});
+
+	it("finishes once the log has been idle for the full grace", async () => {
+		const s = session();
+		let settled = false;
+		const call = s.toolCall("bash", { command: "slow-build" }).finally(() => (settled = true));
+		const proc = await launched();
+		proc.write("done\n");
+		proc.exit(0);
+		// The grace is armed by a poll; the call must not have finished yet.
+		mock.timers.tick(50);
+		await flush();
+		assert.equal(settled, false);
+		// 100 ms of idle log later it ends on its own.
+		mock.timers.tick(100);
+		await flush();
+		assert.equal(settled, true);
+		assert.equal(text(await clock.settle(call)), "done\n");
 	});
 
 	it("reports a process that vanished without a marker, keeping its last output", async () => {
@@ -338,6 +439,52 @@ describe("the active foreground runs", () => {
 		procs.failNextLaunch = new Error("no shell");
 		await clock.settle(s.toolCall("bash", { command: "other-build" })).catch(() => {});
 		assert.equal(foregroundRuns().size, 0);
+	});
+
+	it("forgets the foreground call's group when it ends", async () => {
+		const s = session();
+		const call = s.toolCall("bash", { command: "slow-build" });
+		(await launched()).exit(0);
+		await clock.settle(call);
+		assert.equal(getRegistry().groups.size, 0);
+	});
+
+	it("forgets the foreground call's group when the turn aborts", async () => {
+		const s = session();
+		const turn = new AbortController();
+		const call = s.toolCall("bash", { command: "slow-build" }, turn.signal).catch((error: Error) => error);
+		await launched();
+		turn.abort();
+		await clock.settle(call);
+		assert.equal(getRegistry().groups.size, 0);
+	});
+});
+
+describe("timer cleanup", () => {
+	it("leaves no interval or timer running after a normal end", async () => {
+		const s = session();
+		const track = trackTimers();
+		try {
+			const call = s.toolCall("bash", { command: "slow-build" });
+			(await launched()).exit(0);
+			await clock.settle(call);
+			assert.equal(track.pending.size, 0, "no poll interval or timer may outlive the call");
+		} finally {
+			track.restore();
+		}
+	});
+
+	it("clears its explicit timeout when the command ends first", async () => {
+		const s = session();
+		const track = trackTimers();
+		try {
+			const call = s.toolCall("bash", { command: "slow-build", timeout: 5 });
+			(await launched()).exit(0);
+			await clock.settle(call);
+			assert.equal(track.pending.size, 0, "the explicit timeout must be cleared");
+		} finally {
+			track.restore();
+		}
 	});
 });
 

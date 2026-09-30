@@ -39,6 +39,14 @@ const fileHas = async (path: string) => {
 	return readFileSync(path, "utf8").trim();
 };
 const alive = (pid: number) => realPort.pidAlive(pid);
+/** Pids whose command line matches `pgrep -f <pattern>`; [] when none. */
+const pids = (pattern: string): number[] => {
+	try {
+		return execFileSync("pgrep", ["-f", pattern], { encoding: "utf8" }).trim().split("\n").filter(Boolean).map(Number);
+	} catch {
+		return [];
+	}
+};
 
 describe("the wrapper", () => {
 	it("runs a command with quotes, #, $ and a heredoc exactly as written", async () => {
@@ -136,6 +144,12 @@ describe("a foreground command", () => {
 		await waitFor(() => s.sent.length > 0, "the completion message", 8000);
 		assert.match(s.sent[0].message.content, /finished: exited \(code 0\).*\nLast output:\nstarted\nfinished$/s);
 		await waitFor(() => !alive(pid), "the command's end");
+	});
+
+	it("keeps output a short-lived background child writes after the exit marker", async () => {
+		const s = session();
+		const result = await s.toolCall("bash", { command: "echo main; (sleep 0.02; echo late-stderr >&2) &" });
+		assert.equal(text(result), "main\nlate-stderr\n");
 	});
 
 	it("that ends before the threshold returns the output and exit as Pi's bash does, and leaves no task or log", async () => {
@@ -335,5 +349,148 @@ describe("the process port", () => {
 		assert.throws(() => process.kill(-pid, 0), { code: "EPERM" }, "the precondition: macOS answers EPERM for it");
 		assert.equal(realPort.groupAlive(pid), false);
 		assert.equal(realPort.signalGroup(pid, "SIGKILL"), false);
+	});
+});
+
+describe("session lifetime", () => {
+	/** A stand-in for Pi: a process the test can kill; resolves once it is really gone. */
+	function standIn() {
+		const child = spawn("sleep", ["60"], { stdio: "ignore" });
+		const gone = new Promise<void>((resolve) => child.once("exit", () => resolve()));
+		return { pid: child.pid!, kill: () => child.kill("SIGKILL"), gone };
+	}
+	const nonce = "0123456789abcdef";
+
+	it("a task dies when Pi's pid is gone, and its log ends with the Pi-gone marker", async () => {
+		const pi = standIn();
+		const childFile = scratch("gone-child");
+		const logPath = scratch("gone.log");
+		const pid = await realPort.launch({ command: `sleep 61 & echo $! > ${childFile}; wait`, cwd: root, logPath, nonce, piPid: pi.pid });
+		try {
+			const child = Number(await fileHas(childFile));
+			assert.ok(alive(pid) && alive(child)); // the watch does not fire while Pi lives
+			pi.kill();
+			await pi.gone;
+			await waitFor(() => !alive(child) && !realPort.groupAlive(pid), "the group's end after Pi's");
+			assert.match(readFileSync(logPath, "utf8"), new RegExp(`\\n__PI_BG_GONE__:${nonce}\\n$`));
+		} finally {
+			pi.kill();
+			realPort.signalGroup(pid, "SIGKILL");
+		}
+	});
+
+	it("a task whose Pi is still alive keeps running past one watch period", async () => {
+		// The one fixed wait in the suite: it proves the watch does not fire while Pi
+		// lives (a watch that killed every group after 1 s would leave this task dead).
+		const pi = standIn();
+		const childFile = scratch("alive-child");
+		const logPath = scratch("alive.log");
+		const pid = await realPort.launch({ command: `sleep 68 & echo $! > ${childFile}; wait`, cwd: root, logPath, nonce, piPid: pi.pid });
+		try {
+			const child = Number(await fileHas(childFile));
+			await realSleep(1500);
+			assert.ok(alive(pid) && alive(child), "the watch must not fire while Pi lives");
+			assert.doesNotMatch(readFileSync(logPath, "utf8"), /__PI_BG_GONE__/);
+		} finally {
+			pi.kill();
+			realPort.signalGroup(pid, "SIGKILL");
+		}
+	});
+
+	it("a child a command left behind still dies when Pi is gone, and the log ends with the GONE marker", async () => {
+		// The watcher is its own process outside the task's group, so it survives the
+		// wrapper and kills a leftover `server &` after Pi's death (spec Q34).
+		const pi = standIn();
+		const childFile = scratch("left-child");
+		const logPath = scratch("left.log");
+		const pid = await realPort.launch({ command: `sleep 62 & echo $! > ${childFile}`, cwd: root, logPath, nonce, piPid: pi.pid });
+		try {
+			const child = Number(await fileHas(childFile));
+			await waitFor(() => !alive(pid), "the wrapper's end");
+			assert.match(readFileSync(logPath, "utf8"), new RegExp(`__PI_BG_EXIT__:${nonce}:0\\n$`));
+			pi.kill();
+			await pi.gone;
+			// The ~1 s watch period bounds this: a 4 s watch would leave the child alive past this wait.
+			await waitFor(() => !alive(child) && !realPort.groupAlive(pid), "the child's end after Pi's", 3000);
+			assert.match(readFileSync(logPath, "utf8"), new RegExp(`\\n__PI_BG_GONE__:${nonce}\\n$`));
+		} finally {
+			pi.kill();
+			realPort.signalGroup(pid, "SIGKILL");
+		}
+	});
+
+	it("gives the watcher the real process pid by default", async () => {
+		const s = session();
+		const id = await start(s, "sleep 69");
+		const pid = getRegistry().tasks.get(id)!.pid;
+		try {
+			await waitFor(() => pids(`pi-bg-watch ${process.pid} ${pid} `).length > 0, "the task's watcher carrying the default Pi pid");
+		} finally {
+			realPort.signalGroup(pid, "SIGKILL");
+		}
+	});
+
+	it("the watcher exits once its group has emptied", async () => {
+		const logPath = scratch("w.log");
+		// `sleep` keeps the group alive, so the watcher stays observable until the group is killed.
+		const pid = await realPort.launch({ command: "sleep 69", cwd: root, logPath, nonce: "watchexit" });
+		const pattern = `pi-bg-watch ${process.pid} ${pid} `;
+		try {
+			await waitFor(() => pids(pattern).length > 0, "the task's watcher", 3000);
+			const wpid = pids(pattern)[0];
+			assert.notEqual(wpid, undefined, "the watcher must be found while its group is alive");
+			realPort.signalGroup(pid, "SIGKILL"); // empty the group; the watcher must leave on its own
+			await waitFor(() => !alive(wpid), "the watcher's end", 3000);
+		} finally {
+			realPort.signalGroup(pid, "SIGKILL");
+		}
+	});
+
+	it("session end kills every task's group, a foreground command in flight and what a finished task left", async () => {
+		const s = session();
+		const files = { task: scratch("q-task"), left: scratch("q-left"), fg: scratch("q-fg") };
+		const running = await start(s, `sleep 63 & echo $! > ${files.task}; wait`);
+		const finished = await start(s, `sleep 64 & echo $! > ${files.left}`);
+		const foreground = s.toolCall("bash", { command: `sleep 65 & echo $! > ${files.fg}; wait` }).catch((error: Error) => error);
+		const pids = await Promise.all(Object.values(files).map(async (file) => Number(await fileHas(file))));
+		await ended(s, finished);
+		const groups = [...getRegistry().tasks.values()].map((task) => task.pid);
+		const runningPid = getRegistry().tasks.get(running)!.pid;
+		assert.ok(pids.every(alive) && alive(runningPid));
+		await s.shutdown("quit");
+		await waitFor(() => pids.every((pid) => !alive(pid)), "every child's end");
+		assert.equal(groups.some((pid) => realPort.groupAlive(pid)), false);
+		await foreground;
+	});
+
+	it("a reload leaves a real task running", async () => {
+		const s = session();
+		const id = await start(s, "sleep 66");
+		const pid = getRegistry().tasks.get(id)!.pid;
+		await s.shutdown("reload");
+		try {
+			assert.equal(alive(pid), true);
+		} finally {
+			realPort.signalGroup(pid, "SIGKILL");
+		}
+	});
+
+	it("bash_kill on a finished task stops the child it left, and says so", async () => {
+		const s = session();
+		const childFile = scratch("k-child");
+		const id = await start(s, `sleep 67 & echo $! > ${childFile}`);
+		const child = Number(await fileHas(childFile));
+		await ended(s, id);
+		await waitFor(() => !alive(getRegistry().tasks.get(id)!.pid), "the wrapper's end");
+		assert.equal(text(await s.toolCall("bash_kill", { id })), `Task ${id} had already finished: exited (code 0); stopped the processes it left running.`);
+		await waitFor(() => !alive(child), "the child's end");
+	});
+
+	it("bash_kill on a finished task with nothing left says it already finished: no watch process lingers", async () => {
+		const s = session();
+		const id = await start(s, "exit 0");
+		await ended(s, id);
+		await waitFor(() => !realPort.groupAlive(getRegistry().tasks.get(id)!.pid), "the group's end");
+		assert.equal(text(await s.toolCall("bash_kill", { id })), `Task ${id} has already finished: exited (code 0).`);
 	});
 });
