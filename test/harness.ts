@@ -31,7 +31,7 @@ process.env.PATH = (process.env.PATH ?? "")
 export const cleanup = () => rmSync(root, { recursive: true, force: true });
 
 /** One tool result, the shape `execute` returns. */
-export type ToolResult = { content: { type: string; text: string }[]; details: unknown };
+export type ToolResult = { content: { type: string; text: string }[]; details: unknown; isError?: boolean };
 type Tool = {
 	name: string;
 	description: string;
@@ -110,8 +110,8 @@ export function session(options: { id?: string } = {}) {
 		/** One registered tool's definition. */
 		tool: (name: string) => tools[name],
 		/** Call a tool the way Pi does, with this session's context. */
-		toolCall: (name: string, params: unknown): Promise<ToolResult> =>
-			tools[name].execute(`call-${++calls}`, params as never, undefined, undefined, ctx),
+		toolCall: (name: string, params: unknown, signal?: AbortSignal): Promise<ToolResult> =>
+			tools[name].execute(`call-${++calls}`, params as never, signal, undefined, ctx),
 		/** The session's log directory under the temporary state home. */
 		logDir: () => join(stateHome, "pi-bg", id),
 	};
@@ -177,6 +177,10 @@ export type FakeProc = {
 export type FakeProcesses = {
 	/** The next pid `launch` hands out. */
 	nextPid: number;
+	/** The next `launch` rejects with this error, creating nothing. */
+	failNextLaunch: Error | undefined;
+	/** Runs inside `launch`, before it resolves: a test acts while the spawn is under way. */
+	duringLaunch: (() => void) | undefined;
 	/** The process a task runs as. */
 	of(id: string): FakeProc;
 	all: FakeProc[];
@@ -188,6 +192,8 @@ export function fakeProcesses(): FakeProcesses {
 	const receivers = new Map<number, (signal: string) => void>();
 	const fake: FakeProcesses = {
 		nextPid: 1000,
+		failNextLaunch: undefined,
+		duringLaunch: undefined,
 		all: [],
 		of: (id) => {
 			const proc = table.get(getRegistry().tasks.get(id)!.pid);
@@ -197,6 +203,11 @@ export function fakeProcesses(): FakeProcesses {
 	};
 	const port: ProcessPort = {
 		async launch(options: LaunchOptions) {
+			if (fake.failNextLaunch !== undefined) {
+				const error = fake.failNextLaunch;
+				fake.failNextLaunch = undefined;
+				throw error;
+			}
 			// Exclusive, as the real launch: a log that exists belongs to an earlier run.
 			closeSync(openSync(options.logPath, "wx", 0o600));
 			let leader = true;
@@ -244,6 +255,7 @@ export function fakeProcesses(): FakeProcesses {
 			});
 			table.set(pid, proc);
 			fake.all.push(proc);
+			fake.duringLaunch?.();
 			return pid;
 		},
 		signalGroup(pid, signal) {

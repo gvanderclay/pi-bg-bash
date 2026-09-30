@@ -13,6 +13,7 @@
 	},
 	"files": [
 		"index.ts",
+		"foreground.ts",
 		"kill.ts",
 		"launch.ts",
 		"port.ts",

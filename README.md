@@ -17,6 +17,8 @@ task id at once, and reports the result when the command exits.
   nonce is random per task and passed as an argument, so output that looks like
   a marker is not one. The marker is found wherever it sits, since a
   backgrounded grandchild may write after it, and is never shown as output.
+  The wrapper's own stderr is silenced (the command's still reaches the log), so
+  a shell job notice like `Killed: 9` for a command that killed itself is not output.
 - **Spawn failures:** a missing working directory is refused with "Working
   directory does not exist"; a failed spawn rejects, and no log is left.
 - **Logs:** `$XDG_STATE_HOME/pi-bg/<session-id>/<id>.log` (default
@@ -40,7 +42,46 @@ task id at once, and reports the result when the command exits.
   `exit unknown`, the same wording as `bash_tasks`), runtime and the last ~20
   lines of output.
 - **Footer:** `ctx.ui.setStatus("bg", "bg: N")` while N tasks run.
-- A call without `background` runs through Pi's default bash operations.
+- A call without `background` is a foreground call; see below.
+
+## Foreground calls and promotion
+
+A call without `background` runs Pi's own `bash` (`createBashToolDefinition`'s
+`execute`, built per call for the session's cwd) over a custom `operations.exec`
+(`foreground.ts`). That `exec` launches the command through the same wrapper as
+a background task, with Pi's shell, environment and `PI_*` variables as the
+delegate resolved them, and feeds the log to `onData` (polled every 50 ms; a
+trailing partial exit marker is held back, never shown). Output, truncation,
+the error texts (`Command exited with code N`, `Command aborted`, `Command timed
+out after N seconds`) and the `timeout` checks (`Invalid timeout: ...` for a value
+that is not above 0 or exceeds 2147483.647 s) are Pi's. A `timeout` or an abort of
+the turn, including one that lands while the process is being spawned, sends
+SIGKILL to the command's process group at once, as Pi's bash does; only
+`bash_kill` and `/bg` use SIGTERM, then SIGKILL after the grace period. A
+foreground command that ends leaves no task and no log, and its id is given back.
+A command that vanishes without an exit marker ends the call with `Command
+terminated without an exit code`, its last output kept.
+
+- **Promotion:** a command still running 120 s after it started, with no
+  explicit `timeout` and not starting with `sleep`, becomes a task: the same live
+  wrapper is registered (id, footer `bg: N`, `bash_tasks`, one completion
+  message, runtime counted from the start). `exec` then ends as if the command
+  had exited 0, so Pi's bash closes its output and returns; the extension
+  discards that result except for the text, which it wraps as
+  `Command still running after 120 s; moved to the background as task <id>. ...
+  Output so far: ...`. Nothing in Pi's bash is left pending. After promotion the
+  turn's abort signal no longer reaches the process and no output flows to the
+  finished call. A command that ends in the same instant ends normally.
+  The task's `bash_output` continues after the output the promoted call showed
+  (never re-read). A truncated output's "Full output" footer points at the task's
+  log, not at Pi's temp file, which is deleted; the result carries no `details`.
+  The text says how long the command had actually run.
+- **Not promoted:** a command with any explicit `timeout` (killed at it) or one
+  starting with `sleep`. `PI_BG_BASH_PROMOTE_MS` shortens the threshold, for the
+  contract test.
+- The shortcut and the hint are ticket 06. The one promotion path is
+  `promote()` on each entry of `foregroundRuns()` (`foreground.ts`), the set of
+  foreground calls in flight; the 120 s timer calls it too.
 
 ## `bash_output`
 
@@ -131,7 +172,7 @@ route yet.
 test file, and `--test-timeout` makes a call that never settles fail the run
 instead of hanging it.
 
-- **Behaviour tests** (`background`, `kill`, `output`, `poller`): the extension
+- **Behaviour tests** (`background`, `foreground`, `kill`, `output`, `poller`): the extension
   runs over a scripted fake process table behind the process port, on
   `node:test` mock timers that start at the real now. The test decides when a
   task writes, exits (writing the marker with its nonce), traps SIGTERM, leaves a
@@ -139,7 +180,9 @@ instead of hanging it.
   real files under a temporary `XDG_STATE_HOME`. `clock.settle(call)` ticks the
   clock until a call settles; no test awaits a timer-driven call without it.
 - **Contract tests** (`contract`): the real port with short real `sh` commands
-  on real time and no mock timers: quoting and heredocs, Pi's shell and
+  on real time and no mock timers: foreground parity with Pi's bash and a real
+  promotion (`PI_BG_BASH_PROMOTE_MS`, set in that one test; it waits for the
+  poller's 2 s tick to see the completion message), quoting and heredocs, Pi's shell and
   environment, the marker and nonce (grandchild, spoofed marker, marker across
   a read window), the group kill (child, `trap '' TERM`), the errno mapping
   (including the macOS zombie-only group, macOS only), spawn failures and

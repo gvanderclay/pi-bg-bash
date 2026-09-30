@@ -101,39 +101,65 @@ function updateFooter(registry: Registry): void {
 	}
 }
 
-/** Start `command` as a registered background task under `ctx`'s session. */
-export async function startTask(command: string, ctx: ExtensionContext, options: { timeout?: number } = {}): Promise<Task> {
+/** A log, id and nonce reserved for a command about to launch. */
+export type Reservation = { id: string; logPath: string; nonce: string };
+
+/** Reserve the next free task id and its log under `sessionId`. Ids restart per process but logs belong to the session: skip any id an earlier run of it used. */
+export function reserve(sessionId: string): Reservation {
 	const registry = getRegistry();
-	registry.ctx = ctx;
-	const sessionId = ctx.sessionManager.getSessionId();
 	const dir = sessionLogDir(sessionId);
-	// Ids restart per process but logs belong to the session: skip any id an earlier run of it used.
 	let id: string;
 	do id = `bg-${registry.nextId++}`;
 	while (existsSync(join(dir, `${id}.log`)) || existsSync(join(dir, `${id}.log.gz`)));
-	const logPath = join(dir, `${id}.log`);
-	const nonce = randomBytes(8).toString("hex");
-	const pid = await processPort().launch({ command, cwd: ctx.cwd, logPath, nonce, sessionEnv: sessionEnv(ctx) });
-	const startedAt = Date.now();
-	const task: Task = {
+	return { id, logPath: join(dir, `${id}.log`), nonce: randomBytes(8).toString("hex") };
+}
+
+/** Give back the id of a reservation nothing came of, when it is the newest, so ids stay consecutive. */
+export function release(reservation: Reservation): void {
+	const registry = getRegistry();
+	if (reservation.id === `bg-${registry.nextId - 1}`) registry.nextId--;
+}
+
+/** A running task for a launched process; `startedAt` is when it really began. Not registered yet: see `adopt`. */
+export function makeTask(
+	reservation: Reservation,
+	launched: { command: string; cwd: string; pid: number; startedAt: number; timeout?: number },
+): Task {
+	const { id, logPath, nonce } = reservation;
+	const { command, cwd, pid, startedAt } = launched;
+	return {
 		id,
 		command,
-		cwd: ctx.cwd,
+		cwd,
 		logPath,
 		pid,
 		nonce,
 		scanFrom: 0,
 		startedAt,
-		deadline: options.timeout !== undefined && options.timeout > 0 ? startedAt + options.timeout * 1000 : undefined,
+		deadline: launched.timeout !== undefined && launched.timeout > 0 ? startedAt + launched.timeout * 1000 : undefined,
 		state: "running",
 		readPosition: 0,
 		notified: false,
 		readFailures: 0,
 	};
-	registry.tasks.set(id, task);
+}
+
+/** Register a running task: it shows in the footer and the list, and the poller reports its end. */
+export function adopt(task: Task): Task {
+	const registry = getRegistry();
+	registry.tasks.set(task.id, task);
 	updateFooter(registry);
 	startPollerIfNeeded(registry);
 	return task;
+}
+
+/** Start `command` as a registered background task under `ctx`'s session. */
+export async function startTask(command: string, ctx: ExtensionContext, options: { timeout?: number } = {}): Promise<Task> {
+	getRegistry().ctx = ctx;
+	const reservation = reserve(ctx.sessionManager.getSessionId());
+	const { logPath, nonce } = reservation;
+	const pid = await processPort().launch({ command, cwd: ctx.cwd, logPath, nonce, sessionEnv: sessionEnv(ctx) });
+	return adopt(makeTask(reservation, { command, cwd: ctx.cwd, pid, startedAt: Date.now(), timeout: options.timeout }));
 }
 
 /**

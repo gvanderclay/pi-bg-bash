@@ -5,7 +5,7 @@
 // these tests read state through `bash_output` and `bash_kill`, which look at the
 // log and the process themselves.
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, afterEach, describe, it } from "node:test";
@@ -104,6 +104,97 @@ describe("bash without background", () => {
 		// `wall_time_seconds` is a rounded clock reading: it differs between two runs.
 		const withoutClock = (r: unknown) => JSON.parse(JSON.stringify(r).replace(/"wall_time_seconds":[\d.]+/g, '"wall_time_seconds":0'));
 		assert.deepEqual(withoutClock(ours), withoutClock(theirs));
+	});
+});
+
+describe("a foreground command", () => {
+	/** A command that records its pid in `pidFile`, then blocks until `gate` exists. */
+	const blocked = (pidFile: string, gate: string, after = "echo finished") =>
+		`echo $$ > ${pidFile}; echo started; while [ ! -f ${gate} ]; do sleep 0.02; done; ${after}`;
+	const pidOf = async (pidFile: string) => Number(await fileHas(pidFile));
+
+	it("past the threshold becomes a task: the same process runs on, detached from the turn, and is reported once", { timeout: 15000 }, async (t) => {
+		// A short threshold for this test only: any other foreground call here must finish, not be promoted.
+		process.env.PI_BG_BASH_PROMOTE_MS = "300";
+		t.after(() => delete process.env.PI_BG_BASH_PROMOTE_MS);
+		const s = session();
+		const [pidFile, gate] = [scratch("pid"), scratch("gate")];
+		const turn = new AbortController();
+		const result = await s.toolCall("bash", { command: blocked(pidFile, gate) }, turn.signal);
+		assert.match(text(result), /^Command still running after 0\.3 s; moved to the background as task bg-1\./);
+		assert.match(text(result), /Output so far:\nstarted\n$/);
+		const pid = await pidOf(pidFile);
+		const task = getRegistry().tasks.get("bg-1")!;
+		// The task is the wrapper the call launched, and the running command is its child: nothing restarted.
+		assert.equal(execFileSync("ps", ["-o", "ppid=", "-p", String(pid)], { encoding: "utf8" }).trim(), String(task.pid));
+		turn.abort(); // the turn ends: the task must not
+		await realSleep(100);
+		assert.equal(alive(pid), true);
+		assert.equal(alive(task.pid), true);
+		assert.match(text(await s.toolCall("bash_tasks", {})), /^bg-1 \| running/);
+		writeFileSync(gate, "");
+		await waitFor(() => s.sent.length > 0, "the completion message", 8000);
+		assert.match(s.sent[0].message.content, /finished: exited \(code 0\).*\nLast output:\nstarted\nfinished$/s);
+		await waitFor(() => !alive(pid), "the command's end");
+	});
+
+	it("that ends before the threshold returns the output and exit as Pi's bash does, and leaves no task or log", async () => {
+		const s = session();
+		const params = { command: "printf 'one\\ntwo\\n'; exit 4" };
+		const ours = await s.toolCall("bash", params);
+		const theirs = await createBashToolDefinition(root).execute("x", params, undefined, undefined, s.ctx as never);
+		assert.equal(text(ours), text(theirs as never));
+		assert.equal(ours.isError, true);
+		assert.equal(text(await s.toolCall("bash_tasks", {})), "No background tasks.");
+		assert.equal(existsSync(s.logDir()) ? readdirSync(s.logDir()).length : 0, 0);
+	});
+
+	it("with an explicit timeout is killed at it, group and all, and never promoted", async () => {
+		const s = session();
+		const [pidFile, gate] = [scratch("pid"), scratch("gate")];
+		const failure = await s.toolCall("bash", { command: blocked(pidFile, gate), timeout: 0.6 }).catch((e: Error) => e);
+		assert.ok(failure instanceof Error);
+		assert.match(failure.message, /started\n\n\nCommand timed out after 0\.6 seconds$/);
+		await waitFor(() => !alive(Number(readFileSync(pidFile, "utf8"))), "the command's end");
+		assert.equal(text(await s.toolCall("bash_tasks", {})), "No background tasks.");
+	});
+
+	it("aborted by the turn before the threshold is killed", async () => {
+		const s = session();
+		const [pidFile, gate] = [scratch("pid"), scratch("gate")];
+		const turn = new AbortController();
+		const call = s.toolCall("bash", { command: blocked(pidFile, gate) }, turn.signal).catch((e: Error) => e);
+		const pid = await pidOf(pidFile);
+		turn.abort();
+		const failure = await call;
+		assert.ok(failure instanceof Error);
+		assert.match(failure.message, /Command aborted$/);
+		await waitFor(() => !alive(pid), "the command's end");
+		assert.equal(text(await s.toolCall("bash_tasks", {})), "No background tasks.");
+	});
+
+	it("killed by its own signal reads as Pi's bash reads it: no shell job notice, the same result", async () => {
+		const s = session();
+		const params = { command: "echo before; kill -9 $$" };
+		const ours = await s.toolCall("bash", params);
+		const theirs = await createBashToolDefinition(root).execute("x", params, undefined, undefined, s.ctx as never);
+		assert.equal(text(ours), text(theirs as never));
+		assert.equal(text(ours), "before\n\n\nCommand exited with code 137");
+	});
+
+	it("starting with sleep is never promoted", async () => {
+		const s = session();
+		const result = await s.toolCall("bash", { command: "sleep 0.8; echo woke" });
+		assert.equal(text(result), "woke\n");
+		assert.equal(text(await s.toolCall("bash_tasks", {})), "No background tasks.");
+	});
+
+	it("runs in Pi's shell and environment, as a background task does", async () => {
+		const s = session();
+		const result = await s.toolCall("bash", {
+			command: 'echo "first=${PATH%%:*} session=$PI_SESSION_ID model=$PI_MODEL"; diff <(echo a) <(echo a) && echo same',
+		});
+		assert.equal(text(result), `first=${join(agentDir, "bin")} session=${s.id} model=test-model\nsame\n`);
 	});
 });
 

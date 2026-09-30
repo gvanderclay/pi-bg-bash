@@ -14,8 +14,11 @@ import * as pi from "@earendil-works/pi-coding-agent";
  * The wrapper. `$1` is the command, `$2` the task's nonce, the rest the shell
  * and its arguments. It runs the command in that shell, then appends the marker
  * line, which carries the nonce so only this wrapper can write a valid one.
+ * The wrapper's own stderr is silenced, so a job notice such as "Killed: 9" for a
+ * command that killed itself stays out of the log; the command's stderr still
+ * goes to the log, through fd 3, which the command does not inherit.
  */
-const WRAPPER = 'cmd=$1; nonce=$2; shift 2; "$@" "$cmd"; code=$?; printf "\\n__PI_BG_EXIT__:%s:%s\\n" "$nonce" "$code"';
+const WRAPPER = 'cmd=$1; nonce=$2; shift 2; exec 3>&2 2>/dev/null; "$@" "$cmd" 2>&3 3>&-; code=$?; printf "\\n__PI_BG_EXIT__:%s:%s\\n" "$nonce" "$code"';
 
 /** `$XDG_STATE_HOME/pi-bg`, by default `~/.local/state/pi-bg`. */
 export function stateRoot(): string {

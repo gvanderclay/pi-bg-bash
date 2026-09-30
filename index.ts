@@ -4,10 +4,12 @@
 // `$XDG_STATE_HOME/pi-bg/<session-id>/`, and returns a task id at once. When
 // the command exits the agent gets one completion message, which starts a turn
 // if the agent is idle. The footer shows `bg: N` while N tasks run. A call
-// without `background` runs through Pi's own bash operations unchanged.
+// without `background` is Pi's own `bash` over the same wrapper (`foreground.ts`),
+// and moves to the background if it outlasts 120 s.
 import { createBashToolDefinition, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
+import { runForeground } from "./foreground.ts";
 import { taskLine, stateText } from "./notify.ts";
 import { readOutput } from "./output.ts";
 import { attach, getRegistry, killTask, setContext, startTask } from "./registry.ts";
@@ -15,6 +17,7 @@ import { attach, getRegistry, killTask, setContext, startTask } from "./registry
 const BACKGROUND_DESCRIPTION =
 	"Set `background: true` to start the command detached and return a task id at once; " +
 	"the agent is woken when it finishes. " +
+	"A foreground command with no `timeout` that is still running after 120 s (unless it starts with `sleep`) moves to the background on its own and the call returns its task id. " +
 	"Background completion is reported automatically; do not sleep or poll `bash_output` to wait for it.";
 
 export default function (pi: ExtensionAPI): void {
@@ -31,7 +34,7 @@ export default function (pi: ExtensionAPI): void {
 		}),
 		async execute(toolCallId, params, signal, onUpdate, ctx) {
 			setContext(ctx);
-			if (!params.background) return builtin.execute(toolCallId, params, signal, onUpdate, ctx);
+			if (!params.background) return runForeground(toolCallId, params, signal, onUpdate, ctx);
 			const task = await startTask(params.command, ctx, { timeout: params.timeout });
 			return {
 				content: [

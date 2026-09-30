@@ -41,3 +41,10 @@ export async function killGroup(pid: number): Promise<GroupKill> {
 	port.signalGroup(pid, "SIGKILL");
 	return (await waitGone(pid, AFTER_KILL_MS)) ? "stopped" : "stuck";
 }
+
+/** Stop the process group at once with SIGKILL, as Pi's own `bash` does for a foreground command; resolves once it is gone, or after a second. */
+export async function killGroupNow(pid: number): Promise<GroupKill> {
+	if (!Number.isInteger(pid) || pid <= 1) throw new Error(`refusing to signal process group ${pid}`);
+	if (!processPort().signalGroup(pid, "SIGKILL")) return "gone";
+	return (await waitGone(pid, AFTER_KILL_MS)) ? "stopped" : "stuck";
+}
