@@ -61,6 +61,13 @@ task id at once, and reports the result when the command exits.
   `bash_tasks`), runtime and the last ~20 lines of output.
 - **Footer:** `ctx.ui.setStatus("bg", "bg: N")` while N tasks run.
 - A call without `background` is a foreground call; see below.
+- **Stripped output:** what the agent reads (the foreground result, `bash_output`
+  and the completion message's tail) has ANSI escape codes, carriage returns and
+  other control characters except newline and tab removed, the pipeline Pi
+  applies to the user's `!` commands (`stripAnsi`, `sanitizeBinaryOutput`, then
+  `\r` dropped; `sanitize.ts` carries an own copy, since Pi does not export
+  them). Pi's own `bash` tool hands its output on unstripped, so the foreground
+  result is stripped here too. The logs on disk stay raw, byte for byte.
 
 ## Foreground calls and promotion
 
@@ -134,9 +141,11 @@ running or finished.
   window never starts before the read position) and moves the position to the
   end, noting any unread bytes it skipped. With nothing unread it returns
   "(no new output)".
-- The position counts raw log bytes, so invalid UTF-8 does not lose lines.
-- `filter` is a regex applied to the lines returned; the position still moves
-  past every line read, matching or not.
+- The position counts raw log bytes, so invalid UTF-8 does not lose lines. The
+  text returned is stripped (see above) after the page is cut from the raw log.
+- `filter` is a regex applied to the stripped lines returned, so escape codes
+  do not break a match; the position still moves past every line read,
+  matching or not.
 - The exit marker is never output. The first line reports the task, worded as
   in `bash_tasks`: `running`, `exited (code N)`, `killed (reason)` or `exit unknown`.
 - An unknown id, or an invalid filter, throws, which Pi reports as an error
@@ -249,7 +258,7 @@ test file, and `--test-timeout` makes a call that never settles fail the run
 instead of hanging it.
 
 - **Behaviour tests** (`background`, `foreground`, `kill`, `logs`, `output`,
-  `poller`): the extension
+  `poller`, `sanitize`): the extension
   runs over a scripted fake process table behind the process port, on
   `node:test` mock timers that start at the real now. The test decides when a
   task writes, exits (writing the marker with its nonce), traps SIGTERM, leaves a

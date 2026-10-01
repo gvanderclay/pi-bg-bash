@@ -8,6 +8,7 @@ import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, truncateTail } from "@earendil-wo
 import { openView, type View } from "./logview.ts";
 import { stateText } from "./notify.ts";
 import type { Task } from "./registry.ts";
+import { sanitize } from "./sanitize.ts";
 
 const NEWLINE = 0x0a;
 
@@ -50,7 +51,8 @@ export function readOutput(task: Task, options: OutputOptions): string {
 		const finished = view.marker !== undefined || task.state !== "running";
 		const position = Math.min(task.readPosition, end);
 		const page = options.latest ? newest(view, position, end, finished) : oldest(view, position, end, finished);
-		body = page.text;
+		// Positions count raw log bytes; the agent reads, and `filter` matches, the stripped text.
+		body = sanitize(page.text);
 		note = page.note;
 		task.readPosition = page.next;
 	} finally {

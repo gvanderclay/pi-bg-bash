@@ -3,6 +3,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import { openView } from "./logview.ts";
 import type { Task } from "./registry.ts";
+import { sanitize } from "./sanitize.ts";
 
 export const MESSAGE_TYPE = "pi-bg-bash";
 /** How many lines of the log's end the message carries. */
@@ -26,7 +27,7 @@ function fromCharacterBoundary(buffer: Buffer): Buffer {
 	return buffer.subarray(start);
 }
 
-/** The last lines of the log, marker removed, capped in lines and bytes. Never moves the read position. */
+/** The last lines of the log, marker removed, stripped for the agent (the log stays raw), capped in lines and bytes. Never moves the read position. */
 export function logTail(task: Task): string {
 	let buffer: Buffer;
 	try {
@@ -39,7 +40,7 @@ export function logTail(task: Task): string {
 	} catch {
 		return "(log unavailable)";
 	}
-	const lines = fromCharacterBoundary(buffer).toString("utf8").replace(/\n$/, "").split("\n");
+	const lines = sanitize(fromCharacterBoundary(buffer).toString("utf8")).replace(/\n$/, "").split("\n");
 	const tail = lines.slice(-TAIL_LINES).join("\n");
 	const bytes = Buffer.from(tail, "utf8");
 	return bytes.length <= TAIL_BYTES ? tail : fromCharacterBoundary(bytes.subarray(bytes.length - TAIL_BYTES)).toString("utf8");

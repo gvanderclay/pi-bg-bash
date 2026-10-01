@@ -22,6 +22,7 @@
 		"logview.ts",
 		"notify.ts",
 		"output.ts",
+		"sanitize.ts",
 		"README.md"
 	],
 	"scripts": {

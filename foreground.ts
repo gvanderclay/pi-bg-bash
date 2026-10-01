@@ -18,6 +18,7 @@ import { resolveShell, SESSION_ENV_KEYS } from "./launch.ts";
 import { openView, type View, markerNeedle } from "./logview.ts";
 import { processPort } from "./port.ts";
 import { adopt, forgetGroup, getRegistry, launchGroup, makeTask, release, reserve, type Task } from "./registry.ts";
+import { sanitize } from "./sanitize.ts";
 
 /** How long a foreground command may run before it becomes a background task. */
 const PROMOTE_MS = 120_000;
@@ -279,7 +280,24 @@ export async function runForeground(
 ) {
 	const run: Run = { task: undefined, elapsedMs: 0 };
 	const delegate = createBashToolDefinition(ctx.cwd, { operations: operations(ctx, run) });
-	const result = await delegate.execute(toolCallId, params, signal, onUpdate, ctx);
+	let result: Awaited<ReturnType<typeof delegate.execute>>;
+	try {
+		result = await delegate.execute(toolCallId, params, signal, onUpdate, ctx);
+	} catch (error) {
+		// Pi's bash throws its output with the status (aborted, timed out, no exit code).
+		if (error instanceof Error) error.message = sanitize(error.message);
+		throw error;
+	}
+	// Pi's bash hands the agent the output as the command wrote it; strip it as Pi does
+	// for the user's `!` commands. Its own temp file and the task's log stay raw.
+	result = {
+		...result,
+		content: result.content.map((part) => (part.type === "text" ? { ...part, text: sanitize(part.text) } : part)),
+	};
+	// The full output programmatic callers (codemode scripts) receive.
+	const structured = (result as { structuredContent?: { output?: unknown } }).structuredContent;
+	if (typeof structured?.output === "string")
+		result = { ...result, structuredContent: { ...structured, output: sanitize(structured.output) } } as typeof result;
 	if (run.task === undefined) return result;
 	let output = result.content[0]?.type === "text" ? result.content[0].text : "";
 	const piFile = result.details?.fullOutputPath;
