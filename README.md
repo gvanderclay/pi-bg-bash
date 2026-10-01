@@ -238,9 +238,9 @@ pi install <path to this directory>
 
 The package has no dependencies and no build step. The `pi` manifest loads only
 `./index.ts`; the tests under `test/` are not loaded by Pi. Installed in the
-scratch route (`pi/.pi-scratch/agent/settings.json`). The daily route's
-`npm:pi-bg-tasks` claims the same `bash` tool, `/bg` command and `ctrl+shift+b`
-shortcut, so a root must install only one of the two.
+daily route (`pi/.pi/agent/settings.json`). `npm:pi-bg-tasks` claims the same
+`bash` tool, `/bg` command and `ctrl+shift+b` shortcut, so a root must install
+only one of the two.
 
 ## Requirements
 
