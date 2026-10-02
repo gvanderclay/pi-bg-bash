@@ -51,7 +51,10 @@ at once instead of waiting.
 
 - The `bash` tool keeps Pi's parameters and adds `background`. Without it a
   call runs in the foreground as before, and moves to the background after
-  120 s unless it has an explicit `timeout` or starts with `sleep`.
+  120 s unless it has an explicit `timeout` or starts with `sleep`. Its
+  description tells the model to wait for something to finish (a CI run, a
+  server coming up) with a blocking command such as `gh run watch <run-id>
+  --exit-status` and `background: true`, never `sleep N` and then a check.
 - `bash_output({ id, latest?, filter? })` reads a task's output from where the
   last read stopped, or only the newest output, optionally filtered by a regex.
 - `bash_tasks()` lists every task of the session with its state and runtime.

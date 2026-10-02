@@ -6,6 +6,13 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- The `bash` description tells the model to wait for something to finish (a
+  CI run, a deploy, a server coming up) with a command that blocks until it
+  does, such as `gh run watch <run-id> --exit-status`, run with
+  `background: true`, instead of `sleep N` followed by a check.
+
 ## [0.1.0] - 2026-10-02
 
 The first public release. Before this repository the package lived in its
