@@ -1,6 +1,6 @@
 {
 	"name": "pi-bg-bash",
-	"version": "0.1.0",
+	"version": "0.1.1",
 	"description": "Runs the model's bash commands as detached background tasks and wakes the agent when they finish",
 	"keywords": [
 		"pi-package",
