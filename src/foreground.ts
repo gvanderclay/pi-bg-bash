@@ -26,7 +26,7 @@ import { adopt, forgetGroup, getRegistry, launchGroup, makeTask, release, reserv
 import { sanitize } from "./sanitize.ts";
 
 /** How long a foreground command may run before it becomes a background task. */
-const PROMOTE_MS = 120_000;
+export const PROMOTE_MS = 120_000;
 /** How long before the hint below the editor teaches the shortcut. */
 const HINT_MS = 2000;
 /** The hint widget's key and text; cleared when the call ends or is promoted. */
@@ -270,7 +270,7 @@ function retarget(text: string, piFile: string, task: Task): string {
 function promotedText(task: Task, elapsedMs: number, output: string): string {
 	return (
 		`Command still running after ${Math.round(elapsedMs / 100) / 10} s; moved to the background as task ${task.id}. ` +
-		"Its completion is reported automatically; do not sleep or poll to wait for it.\n\n" +
+		"Its completion is reported automatically.\n\n" +
 		`Output so far:\n${output === "(no output)" ? "" : output}`
 	);
 }

@@ -6,7 +6,7 @@
 import { processPort } from "./port.ts";
 
 /** How long the group gets to end after SIGTERM before SIGKILL. */
-const GRACE_MS = 3000;
+export const GRACE_MS = 3000;
 /** How long to wait for the group to vanish after SIGKILL. */
 const AFTER_KILL_MS = 1000;
 /** How often the group is looked at while waiting. */

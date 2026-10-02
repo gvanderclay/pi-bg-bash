@@ -9,19 +9,21 @@
 import { createBashToolDefinition, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
-import { foregroundRuns, runForeground } from "./foreground.ts";
+import { foregroundRuns, PROMOTE_MS, runForeground } from "./foreground.ts";
+import { GRACE_MS } from "./kill.ts";
 import { cleanupOldLogs } from "./logs.ts";
 import { stateText, taskLine } from "./notify.ts";
 import { readOutput } from "./output.ts";
 import { attach, endSession, getRegistry, killTask, setContext, startTask } from "./registry.ts";
 
 const BACKGROUND_DESCRIPTION =
-	"Set `background: true` to run the command detached: the call returns a task id at once and you are woken when it finishes, " +
-	"so do not sleep or poll `bash_output` to wait for it. " +
-	"To wait for something else, such as CI or a server starting, background a command that blocks until it finishes " +
-	"instead of running `sleep N` and a check: `gh run watch <run-id> --exit-status`, `gh pr checks <number> --watch`, " +
-	"or `until <check>; do sleep 10; done`. " +
-	"A foreground command with no `timeout` still running after 120 s (unless it starts with `sleep`) moves to the background on its own.";
+	"Set `background: true` for a command you expect to outlast a minute or two, such as a long build, a deploy or a server, " +
+	"when you have other work to do meanwhile or nothing to do until it ends. " +
+	"The call returns a task id at once; when the command exits, a message with its exit status and last lines of output arrives " +
+	"and starts a turn if you are idle, so do not sleep or poll `bash_output` to wait for it. " +
+	"To wait for something outside this machine, such as CI, background one command that blocks until it is done, " +
+	"such as `gh run watch <run-id> --exit-status` or `gh pr checks <number> --watch`, instead of running `sleep N` and a check yourself. " +
+	`A foreground command with no \`timeout\` still running after ${PROMOTE_MS / 1000} s (unless it starts with \`sleep\`) moves to the background on its own.`;
 
 export default function (pi: ExtensionAPI): void {
 	attach(pi);
@@ -54,7 +56,7 @@ export default function (pi: ExtensionAPI): void {
 				content: [
 					{
 						type: "text",
-						text: `Started background task ${task.id}. Its completion is reported automatically; do not sleep or poll to wait for it.`,
+						text: `Started background task ${task.id}. Its completion is reported automatically.`,
 					},
 				],
 				details: undefined,
@@ -76,7 +78,7 @@ export default function (pi: ExtensionAPI): void {
 		}),
 		async execute(_toolCallId, params) {
 			const task = getRegistry().tasks.get(params.id);
-			if (task === undefined) throw new Error(`Unknown task id: ${params.id}`);
+			if (task === undefined) throw new Error(`Unknown task id: ${params.id}. bash_tasks lists this session's tasks.`);
 			return { content: [{ type: "text", text: readOutput(task, params) }], details: undefined };
 		},
 	});
@@ -98,13 +100,13 @@ export default function (pi: ExtensionAPI): void {
 		label: "bash_kill",
 		description:
 			"Stop a background bash task and everything it started: SIGTERM to its process group, then SIGKILL " +
-			"after about 3 s if anything is left. No completion message follows; the result reports the final state.",
+			`after about ${GRACE_MS / 1000} s if anything is left. No completion message follows; the result reports the final state.`,
 		parameters: Type.Object({
 			id: Type.String({ description: "The task id returned by a background bash call" }),
 		}),
 		async execute(_toolCallId, params) {
 			const task = getRegistry().tasks.get(params.id);
-			if (task === undefined) throw new Error(`Unknown task id: ${params.id}`);
+			if (task === undefined) throw new Error(`Unknown task id: ${params.id}. bash_tasks lists this session's tasks.`);
 			const outcome = await killTask(task, "killed by agent", { notify: false });
 			const text =
 				outcome === "finished"

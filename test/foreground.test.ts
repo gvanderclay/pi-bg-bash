@@ -279,7 +279,7 @@ describe("a foreground bash call past 120 s", () => {
 		proc.write("compiling\n");
 		const result = await clock.settle(call);
 		assert.match(text(result), /^Command still running after 120 s; moved to the background as task bg-1\./);
-		assert.match(text(result), /Its completion is reported automatically; do not sleep or poll to wait for it\./);
+		assert.match(text(result), /Its completion is reported automatically\.\n\n/);
 		assert.match(text(result), /Output so far:\ncompiling\n$/);
 		assert.equal(result.isError, undefined);
 		assert.equal(procs.all.length, 1);
