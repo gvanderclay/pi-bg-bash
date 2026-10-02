@@ -21,7 +21,7 @@ import { gunzipSync } from "node:zlib";
 import { ownerPid } from "../src/launch.ts";
 import { openView } from "../src/logview.ts";
 import { processPort, setProcessPort } from "../src/port.ts";
-import { getRegistry } from "../src/registry.ts";
+import { getRegistry, POLL_MS } from "../src/registry.ts";
 import {
 	cleanup,
 	type FakeProcesses,
@@ -477,7 +477,7 @@ describe("gzip timing", () => {
 		procs.of(id).write("done\n");
 		procs.of(id).exit(0);
 		await clock.until(() => s.sent.length > 0);
-		await clock.tick(3); // the async gzip fails
+		await clock.until(() => !existsSync(gzPath(s, id)), 3 * POLL_MS); // the async gzip fails
 		assert.equal(existsSync(plainPath(s, id)), true);
 		assert.equal(existsSync(gzPath(s, id)), false);
 		assert.equal(getRegistry().tasks.get(id)!.logPath, plainPath(s, id));
