@@ -19,10 +19,10 @@ import { join } from "node:path";
 import { after, afterEach, beforeEach, describe, it } from "node:test";
 import { gunzipSync } from "node:zlib";
 
-import { getRegistry } from "../registry.ts";
-import { ownerPid } from "../launch.ts";
-import { openView } from "../logview.ts";
-import { processPort, setProcessPort } from "../port.ts";
+import { getRegistry } from "../src/registry.ts";
+import { ownerPid } from "../src/launch.ts";
+import { openView } from "../src/logview.ts";
+import { processPort, setProcessPort } from "../src/port.ts";
 import {
 	cleanup,
 	fakeClock,

@@ -3,33 +3,55 @@
 	"version": "0.1.0",
 	"description": "Runs the model's bash commands as detached background tasks and wakes the agent when they finish",
 	"keywords": [
-		"pi-package"
+		"pi-package",
+		"pi",
+		"pi-extension"
 	],
+	"license": "MIT",
+	"author": "Gage Vander Clay <gvanderclay@gmail.com>",
+	"homepage": "https://github.com/gvanderclay/pi-bg-bash#readme",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/gvanderclay/pi-bg-bash.git"
+	},
+	"bugs": {
+		"url": "https://github.com/gvanderclay/pi-bg-bash/issues"
+	},
 	"type": "module",
+	"engines": {
+		"node": ">=22.19.0"
+	},
+	"packageManager": "pnpm@10.33.0",
 	"pi": {
 		"extensions": [
-			"./index.ts"
+			"./src/index.ts"
 		]
 	},
 	"files": [
-		"index.ts",
-		"foreground.ts",
-		"kill.ts",
-		"launch.ts",
-		"logs.ts",
-		"port.ts",
-		"registry.ts",
-		"logview.ts",
-		"notify.ts",
-		"output.ts",
-		"sanitize.ts",
-		"README.md"
+		"src",
+		"README.md",
+		"LICENSE",
+		"CHANGELOG.md"
 	],
 	"scripts": {
-		"test": "node --test --test-timeout=30000 test/*.test.ts"
+		"lint": "biome ci .",
+		"typecheck": "tsc -p .",
+		"test": "node --test --test-timeout=30000 test/*.test.ts",
+		"check": "pnpm lint && pnpm typecheck && pnpm test",
+		"release": "node scripts/release.mjs"
+	},
+	"publishConfig": {
+		"access": "public"
 	},
 	"peerDependencies": {
 		"@earendil-works/pi-coding-agent": "*",
 		"typebox": "*"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "2.5.14",
+		"@earendil-works/pi-coding-agent": "1.0.0",
+		"@types/node": "26.6.3",
+		"typebox": "1.3.27",
+		"typescript": "7.0.2"
 	}
 }

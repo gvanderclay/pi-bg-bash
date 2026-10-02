@@ -5,9 +5,9 @@
 import assert from "node:assert/strict";
 import { after, afterEach, beforeEach, describe, it } from "node:test";
 
-import { foregroundRuns } from "../foreground.ts";
-import { processPort } from "../port.ts";
-import { getRegistry } from "../registry.ts";
+import { foregroundRuns } from "../src/foreground.ts";
+import { processPort } from "../src/port.ts";
+import { getRegistry } from "../src/registry.ts";
 import {
 	cleanup,
 	fakeClock,
@@ -73,7 +73,7 @@ describe("/reload", () => {
 		assert.deepEqual(procs.all[0].signals, []);
 		assert.deepEqual([...foregroundRuns()].map((run) => run.command), ["slow-build"]);
 		// A reload loads a fresh copy of the module (`moduleCache: false`): it sees the same runs.
-		const copy = (await import("../foreground.ts?reloaded")) as typeof import("../foreground.ts");
+		const copy = (await import("../src/foreground.ts?reloaded")) as typeof import("../src/foreground.ts");
 		assert.notEqual(copy.foregroundRuns, foregroundRuns);
 		assert.deepEqual([...copy.foregroundRuns()].map((run) => run.command), ["slow-build"]);
 		procs.all[0].exit(0);

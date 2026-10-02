@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { after, afterEach, beforeEach, describe, it } from "node:test";
 import { gunzipSync } from "node:zlib";
 
-import { getRegistry } from "../registry.ts";
+import { getRegistry } from "../src/registry.ts";
 import {
 	cleanup,
 	fakeClock,

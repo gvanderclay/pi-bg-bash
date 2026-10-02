@@ -13,9 +13,9 @@ import { gunzipSync } from "node:zlib";
 
 import { createBashToolDefinition } from "@earendil-works/pi-coding-agent";
 
-import { launch } from "../launch.ts";
-import { realPort } from "../port.ts";
-import { getRegistry } from "../registry.ts";
+import { launch } from "../src/launch.ts";
+import { realPort } from "../src/port.ts";
+import { getRegistry } from "../src/registry.ts";
 import { agentDir, cleanup, gzipped, logHas, logText, realSleep, resetRegistry, root, session, type Session, start, text, waitFor } from "./harness.ts";
 
 // A short grace period, so a task that ignores SIGTERM takes well under a second to kill.

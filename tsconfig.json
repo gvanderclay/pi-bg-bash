@@ -1,0 +1,24 @@
+{
+	"compilerOptions": {
+		"strict": true,
+		"noEmit": true,
+		"target": "esnext",
+		"lib": ["esnext"],
+		"module": "nodenext",
+		"moduleResolution": "nodenext",
+		"types": ["node"],
+		"verbatimModuleSyntax": true,
+		"erasableSyntaxOnly": true,
+		"allowImportingTsExtensions": true,
+		"noUncheckedIndexedAccess": false,
+		"exactOptionalPropertyTypes": false,
+		"noImplicitOverride": true,
+		"noPropertyAccessFromIndexSignature": false,
+		"noFallthroughCasesInSwitch": true,
+		"noUnusedLocals": true,
+		"noUnusedParameters": true,
+		"skipLibCheck": true
+	},
+	"include": ["**/*.ts"],
+	"exclude": ["node_modules"]
+}

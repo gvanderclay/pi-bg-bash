@@ -5,7 +5,7 @@ import { chmodSync } from "node:fs";
 import { join } from "node:path";
 import { after, afterEach, beforeEach, describe, it } from "node:test";
 
-import { getRegistry } from "../registry.ts";
+import { getRegistry } from "../src/registry.ts";
 import {
 	cleanup,
 	fakeClock,

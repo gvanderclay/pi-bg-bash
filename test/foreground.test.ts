@@ -10,8 +10,8 @@ import { after, afterEach, beforeEach, describe, it, mock } from "node:test";
 
 import { createBashToolDefinition } from "@earendil-works/pi-coding-agent";
 
-import { foregroundRuns } from "../foreground.ts";
-import { getRegistry } from "../registry.ts";
+import { foregroundRuns } from "../src/foreground.ts";
+import { getRegistry } from "../src/registry.ts";
 import { cleanup, fakeClock, fakeProcesses, type FakeProcesses, resetRegistry, restoreProcesses, root, session, text } from "./harness.ts";
 
 let clock: ReturnType<typeof fakeClock>;

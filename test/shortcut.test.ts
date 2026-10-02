@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { after, afterEach, beforeEach, describe, it } from "node:test";
 
-import { foregroundRuns } from "../foreground.ts";
+import { foregroundRuns } from "../src/foreground.ts";
 import { cleanup, fakeClock, fakeProcesses, type FakeProcesses, resetRegistry, restoreProcesses, session, type Session, text } from "./harness.ts";
 
 const HINT_KEY = "pi-bg-bash-hint";

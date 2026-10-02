@@ -10,10 +10,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { mock } from "node:test";
 
-import register from "../index.ts";
-import type { LaunchOptions } from "../launch.ts";
-import { processPort, realPort, setProcessPort, type ProcessPort } from "../port.ts";
-import { getRegistry, POLL_MS } from "../registry.ts";
+import register from "../src/index.ts";
+import type { LaunchOptions } from "../src/launch.ts";
+import { processPort, realPort, setProcessPort, type ProcessPort } from "../src/port.ts";
+import { getRegistry, POLL_MS } from "../src/registry.ts";
 
 /** A throwaway root for this test file; `XDG_STATE_HOME` points inside it. */
 export const root = mkdtempSync(join(tmpdir(), "pi-bg-bash-test-"));
