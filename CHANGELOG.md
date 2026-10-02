@@ -12,6 +12,16 @@ follows [Semantic Versioning](https://semver.org/).
   CI run, a deploy, a server coming up) with a command that blocks until it
   does, such as `gh run watch <run-id> --exit-status`, run with
   `background: true`, instead of `sleep N` followed by a check.
+- The `bash` description says when to set `background: true` (a command
+  expected to outlast a minute or two), drops the `until … sleep` example, and
+  takes the 120 s promotion and `bash_kill`'s 3 s grace from the code. The
+  "do not sleep or poll" line is now only in the description, not repeated in
+  the start and promotion results. The tests in `test/background.test.ts` and
+  `test/foreground.test.ts` that pinned the old wording are updated, as is the
+  byte-capped tail test in `test/output.test.ts`, whose label now says it was cut.
+- The completion message says when its output was cut to the last 20 lines or
+  4 KiB, and names `bash_output <id>` for the rest.
+- `bash_output` and `bash_kill` name `bash_tasks` when the task id is unknown.
 
 ## [0.1.0] - 2026-10-02
 

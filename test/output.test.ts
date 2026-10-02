@@ -185,6 +185,15 @@ describe("bash_output", () => {
 		assert.deepEqual(lines(text(await out(s, { id }))), []);
 	});
 
+	it("the completion message says when its tail was cut, and names bash_output for the rest", async () => {
+		const s = session();
+		const id = await finished(s, seq(1, 30));
+		assert.match(
+			s.sent[0].message.content,
+			new RegExp(`Last output, cut to the last 20 lines or 4 KiB; \`bash_output ${id}\` reads it all:\n11\n[^]*\n30$`),
+		);
+	});
+
 	it("the completion message does not move the read position", async () => {
 		const s = session();
 		const id = await finished(s, seq(1, 5));
@@ -238,6 +247,6 @@ describe("completion tail", () => {
 		const s = session();
 		await finished(s, `${"€".repeat(3000)}\n`);
 		assert.doesNotMatch(s.sent[0].message.content, /\uFFFD/);
-		assert.match(s.sent[0].message.content, /Last output:\n€+$/);
+		assert.match(s.sent[0].message.content, /Last output, cut to the last 20 lines or 4 KiB; [^\n]*:\n€+$/);
 	});
 });

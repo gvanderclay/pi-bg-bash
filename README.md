@@ -128,7 +128,10 @@ The rest of this README describes the behaviour in detail.
   `deliverAs: "followUp"`, `triggerTurn: true`, with the id, command, exit
   state (`exited (code N)`, `killed (timed out)`, `killed (killed by user)`,
   `killed (log limit passed)`, or `exit unknown`, the same wording as
-  `bash_tasks`), runtime and the last ~20 lines of output.
+  `bash_tasks`), runtime and the last 20 lines of output, capped at 4 KiB.
+  When the cap cut the output, its label says so and names `bash_output <id>`,
+  which reads the whole log since the completion message never moves the read
+  position.
 - **Footer:** `ctx.ui.setStatus("bg", "bg: N")` while N tasks run.
 - A call without `background` is a foreground call; see below.
 - **Stripped output:** what the agent reads (the foreground result, `bash_output`

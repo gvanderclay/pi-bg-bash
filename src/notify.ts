@@ -27,25 +27,27 @@ function fromCharacterBoundary(buffer: Buffer): Buffer {
 	return buffer.subarray(start);
 }
 
-/** The last lines of the log, marker removed, stripped for the agent (the log stays raw), capped in lines and bytes. Never moves the read position. */
-export function logTail(task: Task): string {
+/** The last lines of the log, marker removed, stripped for the agent (the log stays raw), capped in lines and bytes, and whether the cap cut anything. Never moves the read position. */
+export function logTail(task: Task): { text: string; cut: boolean } {
 	let buffer: Buffer;
+	let size: number;
 	try {
 		const view = openView(task);
 		try {
-			buffer = view.read(Math.max(0, view.size - READ_WINDOW), view.size);
+			size = view.size;
+			buffer = view.read(Math.max(0, size - READ_WINDOW), size);
 		} finally {
 			view.close();
 		}
 	} catch {
-		return "(log unavailable)";
+		return { text: "(log unavailable)", cut: false };
 	}
 	const lines = sanitize(fromCharacterBoundary(buffer).toString("utf8")).replace(/\n$/, "").split("\n");
 	const tail = lines.slice(-TAIL_LINES).join("\n");
 	const bytes = Buffer.from(tail, "utf8");
-	return bytes.length <= TAIL_BYTES
-		? tail
-		: fromCharacterBoundary(bytes.subarray(bytes.length - TAIL_BYTES)).toString("utf8");
+	const cut = size > READ_WINDOW || lines.length > TAIL_LINES || bytes.length > TAIL_BYTES;
+	if (bytes.length <= TAIL_BYTES) return { text: tail, cut };
+	return { text: fromCharacterBoundary(bytes.subarray(bytes.length - TAIL_BYTES)).toString("utf8"), cut };
 }
 
 /**
@@ -73,11 +75,14 @@ export function taskLine(task: Task): string {
 
 /** The completion text: id, command, state, runtime and the output's last lines. */
 export function completionText(task: Task): string {
-	const tail = logTail(task);
+	const { text: tail, cut } = logTail(task);
+	const label = cut
+		? `Last output, cut to the last ${TAIL_LINES} lines or ${TAIL_BYTES / 1024} KiB; \`bash_output ${task.id}\` reads it all:`
+		: "Last output:";
 	return [
 		`Background task ${task.id} finished: ${stateText(task)}, ran ${runtimeText(task)}.`,
 		`Command: ${task.command}`,
-		tail === "" ? "(no output)" : `Last output:\n${tail}`,
+		tail === "" ? "(no output)" : `${label}\n${tail}`,
 	].join("\n");
 }
 

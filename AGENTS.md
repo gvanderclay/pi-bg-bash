@@ -58,11 +58,13 @@ and the `ctrl+shift+b` shortcut.
 
 - The tests pin current behaviour. A change that makes one fail changes
   behaviour: update the test only when the change is deliberate, and say so
-  in the commit and in `CHANGELOG.md`.
+  in the pull request and in `CHANGELOG.md`.
 - The README is the behaviour's specification. Change it with the behaviour.
 - Fake time and real processes never meet in one test file: behaviour tests
   run over the fake process port on mock timers, `test/contract.test.ts` over
-  the real port on real time. Tests replace the port only through
-  `test/harness.ts`.
+  the real port on real time. Tests swap the port through `test/harness.ts`
+  (`fakeProcesses`, `restoreProcesses`); a test that needs one call to fail
+  may wrap the current port with `setProcessPort`, as `test/logs.test.ts`
+  does, and its `afterEach` must call `restoreProcesses`.
 - The tools, `/bg`, `ctrl+shift+b`, the `PI_BG_BASH_*` variables and the log
   path `$XDG_STATE_HOME/pi-bg/` keep their names; the package is `pi-bg-bash`.
