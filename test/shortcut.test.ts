@@ -5,7 +5,17 @@ import assert from "node:assert/strict";
 import { after, afterEach, beforeEach, describe, it } from "node:test";
 
 import { foregroundRuns } from "../src/foreground.ts";
-import { cleanup, fakeClock, fakeProcesses, type FakeProcesses, resetRegistry, restoreProcesses, session, type Session, text } from "./harness.ts";
+import {
+	cleanup,
+	type FakeProcesses,
+	fakeClock,
+	fakeProcesses,
+	resetRegistry,
+	restoreProcesses,
+	type Session,
+	session,
+	text,
+} from "./harness.ts";
 
 const HINT_KEY = "pi-bg-bash-hint";
 const HINT_TEXT = "(ctrl+shift+b to background)";
@@ -47,12 +57,12 @@ function trackTimers() {
 		const id = originals.setInterval(callback as never, ms as never);
 		pending.set(id, `interval ${ms}`);
 		return id;
-	}) as typeof setInterval;
+	}) as unknown as typeof setInterval;
 	globalThis.setTimeout = ((callback: (...args: never[]) => void, ms?: number) => {
 		const id = originals.setTimeout(callback as never, ms as never);
 		pending.set(id, `timeout ${ms}`);
 		return id;
-	}) as typeof setTimeout;
+	}) as unknown as typeof setTimeout;
 	globalThis.clearInterval = ((id: unknown) => {
 		pending.delete(id);
 		originals.clearInterval(id as never);
@@ -137,7 +147,7 @@ describe("firing the shortcut", () => {
 describe("the background hint", () => {
 	it("appears 2 s into a foreground command, below the editor, and not before", async () => {
 		const s = session();
-		const call = s.toolCall("bash", { command: "slow-build" });
+		void s.toolCall("bash", { command: "slow-build" });
 		await launched();
 		await clock.advance(1000);
 		assert.equal(shown(s), false, "no hint within the first second");
@@ -150,7 +160,7 @@ describe("the background hint", () => {
 
 	it("shows the hint at 2000 ms and not at 1999 ms", async () => {
 		const s = session();
-		const call = s.toolCall("bash", { command: "slow-build" });
+		void s.toolCall("bash", { command: "slow-build" });
 		await launched();
 		await clock.tickMs(1999);
 		assert.equal(shown(s), false, "no hint at 1999 ms");
@@ -286,7 +296,11 @@ describe("the hint timer", () => {
 			await clock.settle(call);
 			// The task's poller (an interval) legitimately outlives the call; the
 			// hint's setTimeout and the promotion timer must both be gone.
-			assert.equal(track.pending().filter((label) => label.startsWith("timeout")).length, 0, "no timeout may outlive the promoted call");
+			assert.equal(
+				track.pending().filter((label) => label.startsWith("timeout")).length,
+				0,
+				"no timeout may outlive the promoted call",
+			);
 		} finally {
 			track.restore();
 		}

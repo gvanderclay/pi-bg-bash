@@ -5,13 +5,13 @@ import { after, afterEach, beforeEach, describe, it } from "node:test";
 
 import {
 	cleanup,
+	type FakeProcesses,
 	fakeClock,
 	fakeProcesses,
-	type FakeProcesses,
 	resetRegistry,
 	restoreProcesses,
-	session,
 	type Session,
+	session,
 	start,
 	text,
 } from "./harness.ts";

@@ -78,11 +78,16 @@ export function openView(task: Task): View {
 	try {
 		// Size first, then the marker: a marker written in between lies past `physicalSize`.
 		const physicalSize = fstatSync(fd).size;
-		return viewFor(task, physicalSize, (start, end) => {
-			const buffer = Buffer.alloc(end - start);
-			readSync(fd, buffer, 0, buffer.length, start);
-			return buffer;
-		}, () => closeSync(fd));
+		return viewFor(
+			task,
+			physicalSize,
+			(start, end) => {
+				const buffer = Buffer.alloc(end - start);
+				readSync(fd, buffer, 0, buffer.length, start);
+				return buffer;
+			},
+			() => closeSync(fd),
+		);
 	} catch (error) {
 		closeSync(fd);
 		throw error;
@@ -107,7 +112,12 @@ function cutRegions(task: Task): Region[] {
  * appeared yet; two markers (a command that exited during the limit kill) are
  * both cut.
  */
-function viewFor(task: Task, physicalSize: number, read: (start: number, end: number) => Buffer, close: () => void): View {
+function viewFor(
+	task: Task,
+	physicalSize: number,
+	read: (start: number, end: number) => Buffer,
+	close: () => void,
+): View {
 	const segments: { virtual: number; physical: number; length: number }[] = [];
 	let physical = 0;
 	let virtual = 0;
@@ -128,7 +138,8 @@ function viewFor(task: Task, physicalSize: number, read: (start: number, end: nu
 			for (const segment of segments) {
 				const from = Math.max(start, segment.virtual);
 				const to = Math.min(end, segment.virtual + segment.length);
-				if (to > from) parts.push(read(segment.physical + (from - segment.virtual), segment.physical + (to - segment.virtual)));
+				if (to > from)
+					parts.push(read(segment.physical + (from - segment.virtual), segment.physical + (to - segment.virtual)));
 			}
 			return parts.length === 1 ? parts[0] : Buffer.concat(parts);
 		},
@@ -139,5 +150,10 @@ function viewFor(task: Task, physicalSize: number, read: (start: number, end: nu
 /** A finished, gzipped log read whole into memory. The limit is checked per tick, so this can exceed 100 MiB. */
 function openGzView(task: Task): View {
 	const buffer = gunzipSync(readFileSync(task.logPath));
-	return viewFor(task, buffer.length, (start, end) => Buffer.from(buffer.subarray(start, end)), () => {});
+	return viewFor(
+		task,
+		buffer.length,
+		(start, end) => Buffer.from(buffer.subarray(start, end)),
+		() => {},
+	);
 }

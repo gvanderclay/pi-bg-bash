@@ -4,14 +4,14 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { gunzipSync } from "node:zlib";
 import { after, afterEach, beforeEach, describe, it } from "node:test";
+import { gunzipSync } from "node:zlib";
 
 import {
 	cleanup,
+	type FakeProcesses,
 	fakeClock,
 	fakeProcesses,
-	type FakeProcesses,
 	gzipped,
 	logText,
 	resetRegistry,
@@ -74,7 +74,10 @@ describe("agent-facing output is stripped", () => {
 			`Background task ${id} finished: exited (code 0), ran 2.0s.\nCommand: job\nLast output:\n${CLEAN}`,
 		);
 		await clock.until(() => gzipped(s, id));
-		assert.equal(gunzipSync(readFileSync(join(s.logDir(), `${id}.log.gz`))).toString("utf8"), `${RAW}\n__PI_BG_EXIT__:${procs.of(id).nonce}:0\n`);
+		assert.equal(
+			gunzipSync(readFileSync(join(s.logDir(), `${id}.log.gz`))).toString("utf8"),
+			`${RAW}\n__PI_BG_EXIT__:${procs.of(id).nonce}:0\n`,
+		);
 	});
 
 	it("a foreground call's result is stripped, and its log keeps the raw bytes while it runs", async () => {

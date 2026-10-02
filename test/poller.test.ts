@@ -9,9 +9,9 @@ import { gunzipSync } from "node:zlib";
 import { getRegistry } from "../src/registry.ts";
 import {
 	cleanup,
+	type FakeProcesses,
 	fakeClock,
 	fakeProcesses,
-	type FakeProcesses,
 	gzipped,
 	resetRegistry,
 	restoreProcesses,

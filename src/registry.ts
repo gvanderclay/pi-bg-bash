@@ -58,7 +58,7 @@ export type Task = {
 	deadline?: number;
 	/** The group kill in progress, so a second request joins it. */
 	killing?: Promise<"killed" | "gone" | "stuck">;
-	/** The kill of what an ended task left running (Q32), so a second request joins it. */
+	/** The kill of what an ended task left running, so a second request joins it. */
 	clearing?: Promise<Leftovers>;
 	/** Where `bash_output` will next read; the completion tail never moves it. */
 	readPosition: number;
@@ -91,7 +91,14 @@ export type Leftovers = "none" | "stopped" | "stuck";
 /** The one registry of this Pi process. */
 export function getRegistry(): Registry {
 	const holder = globalThis as unknown as Record<symbol, Registry | undefined>;
-	const registry = (holder[KEY] ??= { tasks: new Map(), nextId: 1, groups: new Set(), emptyGroups: new Set(), launching: new Set(), foreground: new Set() });
+	const registry = (holder[KEY] ??= {
+		tasks: new Map(),
+		nextId: 1,
+		groups: new Set(),
+		emptyGroups: new Set(),
+		launching: new Set(),
+		foreground: new Set(),
+	});
 	// A registry left by an older copy of the extension may lack later fields.
 	registry.groups ??= new Set();
 	registry.emptyGroups ??= new Set();
@@ -138,7 +145,9 @@ export async function endSession(): Promise<void> {
 	// No completion may leak into the next session from a kill still in flight
 	// (a /bg pick or a deadline kill), so mark every task reported before clearing.
 	for (const task of tasks) task.notified = true;
-	const pids = new Set([...registry.groups, ...tasks.map((task) => task.pid)].filter((pid) => !registry.emptyGroups.has(pid)));
+	const pids = new Set(
+		[...registry.groups, ...tasks.map((task) => task.pid)].filter((pid) => !registry.emptyGroups.has(pid)),
+	);
 	registry.groups.clear();
 	registry.emptyGroups.clear();
 	registry.tasks.clear();
@@ -226,7 +235,11 @@ export function adopt(task: Task): Task {
 }
 
 /** Start `command` as a registered background task under `ctx`'s session. */
-export async function startTask(command: string, ctx: ExtensionContext, options: { timeout?: number } = {}): Promise<Task> {
+export async function startTask(
+	command: string,
+	ctx: ExtensionContext,
+	options: { timeout?: number } = {},
+): Promise<Task> {
 	getRegistry().ctx = ctx;
 	const reservation = reserve(ctx.sessionManager.getSessionId());
 	const { logPath, nonce } = reservation;
@@ -312,7 +325,7 @@ function refresh(registry: Registry, task: Task): void {
 	task.state = marker === undefined ? "exit-unknown" : "exited";
 	task.exitCode = marker?.code;
 	// A group known empty can no longer hold the wrapper's pid: record it so a
-	// later session-end kill or Q32 never signals a pid the OS has reused. A
+	// later session-end kill or leftover kill never signals a pid the OS has reused. A
 	// leftover group keeps the pid, so tasks with leftovers stay covered.
 	if (marker !== undefined && !processPort().groupAlive(task.pid)) registry.emptyGroups.add(task.pid);
 	updateFooter(registry);
@@ -354,7 +367,7 @@ export async function killTask(
 		refresh(registry, task);
 		if (task.state !== "running") {
 			if (!options.notify) task.notified = true;
-			// Q32: an ended task's command may have left processes in its group.
+			// An ended task's command may have left processes in its group.
 			task.clearing ??= stopLeftovers(task).finally(() => {
 				task.clearing = undefined;
 			});
@@ -381,7 +394,12 @@ async function stopLeftovers(task: Task): Promise<Leftovers> {
 	return how === "gone" ? "none" : how === "stopped" ? "stopped" : "stuck";
 }
 
-async function stopGroup(registry: Registry, task: Task, reason: KillReason, notify: boolean): Promise<"killed" | "gone" | "stuck"> {
+async function stopGroup(
+	registry: Registry,
+	task: Task,
+	reason: KillReason,
+	notify: boolean,
+): Promise<"killed" | "gone" | "stuck"> {
 	const how = await killGroup(task.pid);
 	task.endedAt = Date.now();
 	if (how === "gone") {

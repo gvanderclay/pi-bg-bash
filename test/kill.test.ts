@@ -8,9 +8,9 @@ import { after, afterEach, beforeEach, describe, it } from "node:test";
 import { getRegistry } from "../src/registry.ts";
 import {
 	cleanup,
+	type FakeProcesses,
 	fakeClock,
 	fakeProcesses,
-	type FakeProcesses,
 	resetRegistry,
 	restoreProcesses,
 	session,
@@ -52,7 +52,10 @@ describe("bash_tasks", () => {
 		const running = await start(s, "sleep 30");
 		await clock.advance(4000);
 		const lines = text(await s.toolCall("bash_tasks", {})).split("\n");
-		assert.deepEqual(lines, [`${finished} | exited (code 3) | 2.0s | echo hi; exit 3`, `${running} | running | 4.0s | sleep 30`]);
+		assert.deepEqual(lines, [
+			`${finished} | exited (code 3) | 2.0s | echo hi; exit 3`,
+			`${running} | running | 4.0s | sleep 30`,
+		]);
 	});
 
 	it("freezes a finished task's runtime at its end, in the list and in the completion message", async () => {
@@ -179,7 +182,10 @@ describe("bash_kill", () => {
 		const id = await start(s, "sleep 30");
 		const proc = procs.of(id);
 		proc.zombie();
-		assert.equal(text(await clock.settle(s.toolCall("bash_kill", { id }))), `Task ${id} had already ended: exit unknown.`);
+		assert.equal(
+			text(await clock.settle(s.toolCall("bash_kill", { id }))),
+			`Task ${id} had already ended: exit unknown.`,
+		);
 		assert.deepEqual(proc.signals, [], "nothing was signalled");
 		await clock.tick(3);
 		assert.equal(s.sent.length, 0);
@@ -193,7 +199,10 @@ describe("bash_kill", () => {
 		const log = join(s.logDir(), `${id}.log`);
 		chmodSync(log, 0o000);
 		try {
-			assert.equal(text(await clock.settle(s.toolCall("bash_kill", { id }))), `Task ${id} had already ended: exit unknown.`);
+			assert.equal(
+				text(await clock.settle(s.toolCall("bash_kill", { id }))),
+				`Task ${id} had already ended: exit unknown.`,
+			);
 		} finally {
 			chmodSync(log, 0o600);
 		}
@@ -229,7 +238,10 @@ describe("a background timeout", () => {
 		assert.equal(proc.groupAlive(), false);
 		assert.deepEqual(proc.signals, ["SIGTERM"]);
 		// The poll at 6 s sends SIGTERM; the group is seen gone 0.1 s later.
-		assert.match(s.sent[0].message.content, new RegExp(`^Background task ${id} finished: killed \\(timed out\\), ran 6\\.1s\\.`));
+		assert.match(
+			s.sent[0].message.content,
+			new RegExp(`^Background task ${id} finished: killed \\(timed out\\), ran 6\\.1s\\.`),
+		);
 		assert.deepEqual(s.sent[0].options, { deliverAs: "followUp", triggerTurn: true });
 		await clock.tick(3);
 		assert.equal(s.sent.length, 1);
@@ -246,7 +258,10 @@ describe("a background timeout", () => {
 		assert.equal(s.sent.length, 0);
 		await clock.until(() => s.sent.length > 0);
 		assert.equal(s.sent.length, 1);
-		assert.match(s.sent[0].message.content, new RegExp(`^Background task ${id} finished: killed \\(timed out\\), ran 9\\.1s\\.`));
+		assert.match(
+			s.sent[0].message.content,
+			new RegExp(`^Background task ${id} finished: killed \\(timed out\\), ran 9\\.1s\\.`),
+		);
 		assert.doesNotMatch(s.sent[0].message.content, /exit unknown/);
 		assert.deepEqual(proc.signals, ["SIGTERM", "SIGKILL"]);
 		assert.equal(getRegistry().tasks.get(id)?.state, "killed");
@@ -292,7 +307,10 @@ describe("/bg", () => {
 		assert.equal(proc.groupAlive(), false);
 		await clock.tick(3);
 		assert.equal(s.sent.length, 2);
-		assert.match(s.sent[1].message.content, new RegExp(`^Background task ${running} finished: killed \\(killed by user\\), ran 0\\.2s\\.`));
+		assert.match(
+			s.sent[1].message.content,
+			new RegExp(`^Background task ${running} finished: killed \\(killed by user\\), ran 0\\.2s\\.`),
+		);
 		assert.deepEqual(s.sent[1].options, { deliverAs: "followUp", triggerTurn: true });
 	});
 

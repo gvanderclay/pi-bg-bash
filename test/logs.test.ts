@@ -18,21 +18,20 @@ import {
 import { join } from "node:path";
 import { after, afterEach, beforeEach, describe, it } from "node:test";
 import { gunzipSync } from "node:zlib";
-
-import { getRegistry } from "../src/registry.ts";
 import { ownerPid } from "../src/launch.ts";
 import { openView } from "../src/logview.ts";
 import { processPort, setProcessPort } from "../src/port.ts";
+import { getRegistry } from "../src/registry.ts";
 import {
 	cleanup,
+	type FakeProcesses,
 	fakeClock,
 	fakeProcesses,
-	type FakeProcesses,
 	gzipped,
 	resetRegistry,
 	restoreProcesses,
-	session,
 	type Session,
+	session,
 	start,
 	stateHome,
 	text,
@@ -90,7 +89,10 @@ describe("gzip after the completion message", () => {
 		assert.equal(existsSync(plainPath(s, id)), false);
 		assert.equal(statSync(gzPath(s, id)).mode & 0o777, 0o600);
 		assert.equal(getRegistry().tasks.get(id)!.logPath, gzPath(s, id));
-		assert.match(gunzipSync(readFileSync(gzPath(s, id))).toString("utf8"), /^one\ntwo\n\n__PI_BG_EXIT__:[0-9a-f]{16}:0\n$/);
+		assert.match(
+			gunzipSync(readFileSync(gzPath(s, id))).toString("utf8"),
+			/^one\ntwo\n\n__PI_BG_EXIT__:[0-9a-f]{16}:0\n$/,
+		);
 	});
 
 	it("does not gzip a task the agent killed, since no completion message is sent", async () => {
@@ -230,7 +232,12 @@ describe("cleanup at session start", () => {
 
 	it("unlinks a malformed owner.pid so an aged empty directory can be removed", async () => {
 		const s = session();
-		for (const [name, contents] of [["junk", "not-a-pid"], ["empty", ""], ["one", "1"], ["zero", "0"]] as const) {
+		for (const [name, contents] of [
+			["junk", "not-a-pid"],
+			["empty", ""],
+			["one", "1"],
+			["zero", "0"],
+		] as const) {
 			const dir = sessionDir(name);
 			mkdirSync(dir, { recursive: true });
 			writeFileSync(join(dir, "owner.pid"), contents);

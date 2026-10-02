@@ -4,7 +4,7 @@
 // for a pid that now belongs to someone else), both mean "gone". Everything above
 // it (the TERM, grace, KILL escalation, the poller) runs on timers and can be
 // driven by fake time against a fake port; see `test/harness.ts`.
-import { launch, type LaunchOptions } from "./launch.ts";
+import { type LaunchOptions, launch } from "./launch.ts";
 
 export type ProcessPort = {
 	/** Start a task detached; resolves to its pid, rejects as `launch` does. */

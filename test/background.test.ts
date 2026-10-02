@@ -2,17 +2,17 @@
 // log's place and mode, the footer and the tool's schema.
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync, statSync } from "node:fs";
-import { after, afterEach, beforeEach, describe, it } from "node:test";
 import { join } from "node:path";
+import { after, afterEach, beforeEach, describe, it } from "node:test";
 import { gunzipSync } from "node:zlib";
 
 import { createBashToolDefinition } from "@earendil-works/pi-coding-agent";
 
 import {
 	cleanup,
+	type FakeProcesses,
 	fakeClock,
 	fakeProcesses,
-	type FakeProcesses,
 	gzipped,
 	resetRegistry,
 	restoreProcesses,
@@ -86,7 +86,10 @@ describe("bash with background: true", () => {
 		assert.deepEqual(readdirSync(s.logDir()).sort(), [`${id}.log.gz`, "owner.pid"].sort());
 		assert.equal(statSync(s.logDir()).mode & 0o777, 0o700);
 		assert.equal(statSync(join(s.logDir(), `${id}.log.gz`)).mode & 0o777, 0o600);
-		assert.match(gunzipSync(readFileSync(join(s.logDir(), `${id}.log.gz`))).toString("utf8"), /^hi\n\n__PI_BG_EXIT__:[0-9a-f]{16}:3\n$/);
+		assert.match(
+			gunzipSync(readFileSync(join(s.logDir(), `${id}.log.gz`))).toString("utf8"),
+			/^hi\n\n__PI_BG_EXIT__:[0-9a-f]{16}:3\n$/,
+		);
 	});
 
 	it("hands the launch the command, the working directory and Pi's session variables from the context", async () => {

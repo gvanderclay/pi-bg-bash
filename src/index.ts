@@ -11,7 +11,7 @@ import { Type } from "typebox";
 
 import { foregroundRuns, runForeground } from "./foreground.ts";
 import { cleanupOldLogs } from "./logs.ts";
-import { taskLine, stateText } from "./notify.ts";
+import { stateText, taskLine } from "./notify.ts";
 import { readOutput } from "./output.ts";
 import { attach, endSession, getRegistry, killTask, setContext, startTask } from "./registry.ts";
 
@@ -30,7 +30,7 @@ export default function (pi: ExtensionAPI): void {
 			setContext(ctx);
 			// One press promotes every foreground call in flight: with parallel tool
 			// calls the turn stays blocked until all finish, so several can be running
-			// at once (decided for ticket 06).
+			// at once.
 			for (const run of foregroundRuns()) run.promote();
 		},
 	});
@@ -132,7 +132,11 @@ export default function (pi: ExtensionAPI): void {
 			if (task === undefined) return;
 			const outcome = await killTask(task, "killed by user", { notify: true });
 			if (outcome === "cleared") ctx.ui.notify(`Task ${task.id}: stopped the processes it left running.`, "info");
-			if (outcome === "leftover-stuck") ctx.ui.notify(`Task ${task.id}: the processes it left running survived SIGKILL and are still running.`, "warning");
+			if (outcome === "leftover-stuck")
+				ctx.ui.notify(
+					`Task ${task.id}: the processes it left running survived SIGKILL and are still running.`,
+					"warning",
+				);
 		},
 	});
 	pi.on("session_start", (_event, ctx) => {

@@ -43,7 +43,9 @@ export function logTail(task: Task): string {
 	const lines = sanitize(fromCharacterBoundary(buffer).toString("utf8")).replace(/\n$/, "").split("\n");
 	const tail = lines.slice(-TAIL_LINES).join("\n");
 	const bytes = Buffer.from(tail, "utf8");
-	return bytes.length <= TAIL_BYTES ? tail : fromCharacterBoundary(bytes.subarray(bytes.length - TAIL_BYTES)).toString("utf8");
+	return bytes.length <= TAIL_BYTES
+		? tail
+		: fromCharacterBoundary(bytes.subarray(bytes.length - TAIL_BYTES)).toString("utf8");
 }
 
 /**

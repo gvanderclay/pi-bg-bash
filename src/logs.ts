@@ -2,8 +2,7 @@
 // finished log once the agent has been told, and removing old logs at session
 // start. The size check runs on its own fast timer in the registry (about four
 // times a second) and again in the 2 s poller, so it records the kill reason
-// and sends the completion message through the same path as a deadline kill;
-// see the ticket's `## Answer`.
+// and sends the completion message through the same path as a deadline kill.
 import {
 	appendFileSync,
 	createReadStream,

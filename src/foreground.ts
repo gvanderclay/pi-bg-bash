@@ -11,11 +11,16 @@
 // the one promotion path, for the timer here and for any other trigger.
 import { rmSync } from "node:fs";
 
-import { type BashOperations, createBashToolDefinition, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import {
+	type BashOperations,
+	createBashToolDefinition,
+	type ExtensionContext,
+	type ExtensionToolContext,
+} from "@earendil-works/pi-coding-agent";
 
 import { killGroupNow } from "./kill.ts";
 import { resolveShell, SESSION_ENV_KEYS } from "./launch.ts";
-import { openView, type View, markerNeedle } from "./logview.ts";
+import { markerNeedle, openView, type View } from "./logview.ts";
 import { processPort } from "./port.ts";
 import { adopt, forgetGroup, getRegistry, launchGroup, makeTask, release, reserve, type Task } from "./registry.ts";
 import { sanitize } from "./sanitize.ts";
@@ -276,7 +281,7 @@ export async function runForeground(
 	params: { command: string; timeout?: number },
 	signal: AbortSignal | undefined,
 	onUpdate: Parameters<ReturnType<typeof createBashToolDefinition>["execute"]>[3],
-	ctx: ExtensionContext,
+	ctx: ExtensionToolContext,
 ) {
 	const run: Run = { task: undefined, elapsedMs: 0 };
 	const delegate = createBashToolDefinition(ctx.cwd, { operations: operations(ctx, run) });
@@ -305,5 +310,8 @@ export async function runForeground(
 		output = retarget(output, piFile, run.task);
 		rmSync(piFile, { force: true }); // frozen at promotion; the task's log is the live copy
 	}
-	return { content: [{ type: "text" as const, text: promotedText(run.task, run.elapsedMs, output) }], details: undefined };
+	return {
+		content: [{ type: "text" as const, text: promotedText(run.task, run.elapsedMs, output) }],
+		details: undefined,
+	};
 }

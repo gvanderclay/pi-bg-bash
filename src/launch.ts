@@ -6,7 +6,18 @@
 // separate watcher, its own detached process outside the task's group, kills
 // whatever the command left running when Pi dies (see `WATCH`).
 import { spawn } from "node:child_process";
-import { accessSync, chmodSync, closeSync, constants, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import {
+	accessSync,
+	chmodSync,
+	closeSync,
+	constants,
+	mkdirSync,
+	openSync,
+	readFileSync,
+	renameSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
 
@@ -153,12 +164,16 @@ export async function launch(options: LaunchOptions): Promise<number> {
 	// Exclusive: a log that already exists belongs to an earlier run and must not be appended to.
 	const fd = openSync(logPath, "wx", 0o600);
 	try {
-		const child = spawn("sh", ["-c", WRAPPER, "pi-bg", command, nonce, String(options.piPid ?? process.pid), shell, ...args], {
-			cwd,
-			env,
-			detached: true,
-			stdio: ["ignore", fd, fd],
-		});
+		const child = spawn(
+			"sh",
+			["-c", WRAPPER, "pi-bg", command, nonce, String(options.piPid ?? process.pid), shell, ...args],
+			{
+				cwd,
+				env,
+				detached: true,
+				stdio: ["ignore", fd, fd],
+			},
+		);
 		await new Promise<void>((resolve, reject) => {
 			child.once("spawn", resolve);
 			child.once("error", reject);
@@ -170,7 +185,11 @@ export async function launch(options: LaunchOptions): Promise<number> {
 		// when Pi dies. It fails open: a watcher that cannot start leaves the task
 		// running without a crash watch, never failing the task itself.
 		try {
-			const watcher = spawn("sh", ["-c", WATCH, "pi-bg-watch", String(options.piPid ?? process.pid), String(child.pid), nonce], { detached: true, stdio: ["ignore", fd, fd] });
+			const watcher = spawn(
+				"sh",
+				["-c", WATCH, "pi-bg-watch", String(options.piPid ?? process.pid), String(child.pid), nonce],
+				{ detached: true, stdio: ["ignore", fd, fd] },
+			);
 			watcher.on("error", () => {}); // the async "error" event is the same fail-open path
 			watcher.unref();
 		} catch {

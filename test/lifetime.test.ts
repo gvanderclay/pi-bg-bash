@@ -10,9 +10,9 @@ import { processPort } from "../src/port.ts";
 import { getRegistry } from "../src/registry.ts";
 import {
 	cleanup,
+	type FakeProcesses,
 	fakeClock,
 	fakeProcesses,
-	type FakeProcesses,
 	resetRegistry,
 	restoreProcesses,
 	session,
@@ -71,11 +71,18 @@ describe("/reload", () => {
 		await clock.settle(old.shutdown("reload"));
 		const fresh = session({ id: old.id });
 		assert.deepEqual(procs.all[0].signals, []);
-		assert.deepEqual([...foregroundRuns()].map((run) => run.command), ["slow-build"]);
+		assert.deepEqual(
+			[...foregroundRuns()].map((run) => run.command),
+			["slow-build"],
+		);
 		// A reload loads a fresh copy of the module (`moduleCache: false`): it sees the same runs.
-		const copy = (await import("../src/foreground.ts?reloaded")) as typeof import("../src/foreground.ts");
+		const reloaded = "../src/foreground.ts?reloaded"; // a fresh module instance, as /reload loads
+		const copy = (await import(reloaded)) as typeof import("../src/foreground.ts");
 		assert.notEqual(copy.foregroundRuns, foregroundRuns);
-		assert.deepEqual([...copy.foregroundRuns()].map((run) => run.command), ["slow-build"]);
+		assert.deepEqual(
+			[...copy.foregroundRuns()].map((run) => run.command),
+			["slow-build"],
+		);
 		procs.all[0].exit(0);
 		assert.equal(text(await clock.settle(call)), "(no output)");
 		assert.equal(fresh.sent.length, 0);
@@ -144,7 +151,7 @@ for (const reason of ["quit", "new", "resume", "fork"] as const) {
 
 		it("sets notified on every task so an in-flight kill cannot leak its message into the next session", async () => {
 			const s = session();
-			const id = await start(s, "long");
+			await start(s, "long");
 			s.dialogs.answer = (options) => options[0];
 			const killing = s.command("bg"); // a /bg kill with notify: true, left in flight
 			await clock.advance(100); // into the SIGTERM grace period
@@ -177,14 +184,17 @@ for (const reason of ["quit", "new", "resume", "fork"] as const) {
 	});
 }
 
-describe("a task whose command has exited (Q32)", () => {
+describe("a task whose command has exited", () => {
 	it("bash_kill stops what the command left running and says so", async () => {
 		const s = session();
 		const id = await start(s, "sleep 60 &");
 		procs.of(id).exit(0, { child: true });
 		await clock.until(() => s.sent.length > 0);
 		const result = await clock.settle(s.toolCall("bash_kill", { id }));
-		assert.equal(text(result), `Task ${id} had already finished: exited (code 0); stopped the processes it left running.`);
+		assert.equal(
+			text(result),
+			`Task ${id} had already finished: exited (code 0); stopped the processes it left running.`,
+		);
 		assert.equal(procs.of(id).signals[0], "SIGTERM");
 		assert.equal(procs.of(id).groupAlive(), false);
 	});

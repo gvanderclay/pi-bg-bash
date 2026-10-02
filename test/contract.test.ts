@@ -16,7 +16,21 @@ import { createBashToolDefinition } from "@earendil-works/pi-coding-agent";
 import { launch } from "../src/launch.ts";
 import { realPort } from "../src/port.ts";
 import { getRegistry } from "../src/registry.ts";
-import { agentDir, cleanup, gzipped, logHas, logText, realSleep, resetRegistry, root, session, type Session, start, text, waitFor } from "./harness.ts";
+import {
+	agentDir,
+	cleanup,
+	gzipped,
+	logHas,
+	logText,
+	realSleep,
+	resetRegistry,
+	root,
+	type Session,
+	session,
+	start,
+	text,
+	waitFor,
+} from "./harness.ts";
 
 // A short grace period, so a task that ignores SIGTERM takes well under a second to kill.
 process.env.PI_BG_BASH_GRACE_MS = "300";
@@ -26,7 +40,8 @@ after(cleanup);
 
 const out = async (s: Session, id: string) => text(await s.toolCall("bash_output", { id }));
 /** Wait until the task's exit marker is in the log. */
-const ended = (s: Session, id: string) => waitFor(() => /__PI_BG_EXIT__:[0-9a-f]{16}:\d+\n$/.test(logText(s, id)), `${id}'s marker`);
+const ended = (s: Session, id: string) =>
+	waitFor(() => /__PI_BG_EXIT__:[0-9a-f]{16}:\d+\n$/.test(logText(s, id)), `${id}'s marker`);
 /** Run a command to its end and return what `bash_output` reports. */
 async function run(s: Session, command: string): Promise<string> {
 	const id = await start(s, command);
@@ -51,11 +66,14 @@ const pids = (pattern: string): number[] => {
 
 describe("the wrapper", () => {
 	it("runs a command with quotes, #, $ and a heredoc exactly as written", async () => {
-		const result = await run(session(), `X=5
+		const result = await run(
+			session(),
+			`X=5
 echo "it's $X" # not a comment
 cat <<'EOF'
 literal $HOME "q" 'r' # h
-EOF`);
+EOF`,
+		);
 		assert.match(result, /^Task bg-1: exited \(code 0\)\.\nit's 5\nliteral \$HOME "q" 'r' # h$/);
 	});
 
@@ -66,7 +84,10 @@ EOF`);
 	it("returns a task id without waiting for the command", { timeout: 5000 }, async () => {
 		const s = session();
 		const gate = scratch("gate");
-		const result = await s.toolCall("bash", { command: `while [ ! -f ${gate} ]; do sleep 0.02; done`, background: true });
+		const result = await s.toolCall("bash", {
+			command: `while [ ! -f ${gate} ]; do sleep 0.02; done`,
+			background: true,
+		});
 		assert.match(text(result), /^Started background task bg-\d+\./);
 		writeFileSync(gate, "");
 	});
@@ -82,7 +103,10 @@ EOF`);
 	it("gives the command Pi's session variables from the context", async () => {
 		const s = session();
 		const result = await run(s, 'echo "$PI_SESSION_ID|$PI_SESSION_FILE|$PI_PROVIDER|$PI_MODEL|$PI_REASONING_LEVEL"');
-		assert.match(result, new RegExp(`${s.id}\\|${join(root, "sessions", `${s.id}.jsonl`)}\\|test-provider\\|test-model\\|high$`));
+		assert.match(
+			result,
+			new RegExp(`${s.id}\\|${join(root, "sessions", `${s.id}.jsonl`)}\\|test-provider\\|test-model\\|high$`),
+		);
 	});
 
 	it("drops inherited session variables the context lacks", async () => {
@@ -94,7 +118,10 @@ EOF`);
 			s.ctx.model = undefined;
 			s.ctx.thinkingLevel = undefined;
 			s.ctx.sessionManager.getSessionFile = () => undefined as never;
-			const result = await run(s, 'echo "[${PI_PROVIDER-unset}|${PI_MODEL-unset}|${PI_REASONING_LEVEL-unset}|${PI_SESSION_FILE-unset}]"');
+			const result = await run(
+				s,
+				'echo "[${PI_PROVIDER-unset}|${PI_MODEL-unset}|${PI_REASONING_LEVEL-unset}|${PI_SESSION_FILE-unset}]"',
+			);
 			assert.match(result, /\[unset\|unset\|unset\|unset\]$/);
 		} finally {
 			delete process.env.PI_MODEL;
@@ -111,7 +138,8 @@ describe("bash without background", () => {
 		const ours = await s.toolCall("bash", params);
 		const theirs = await createBashToolDefinition(root).execute("x", params, undefined, undefined, s.ctx as never);
 		// `wall_time_seconds` is a rounded clock reading: it differs between two runs.
-		const withoutClock = (r: unknown) => JSON.parse(JSON.stringify(r).replace(/"wall_time_seconds":[\d.]+/g, '"wall_time_seconds":0'));
+		const withoutClock = (r: unknown) =>
+			JSON.parse(JSON.stringify(r).replace(/"wall_time_seconds":[\d.]+/g, '"wall_time_seconds":0'));
 		assert.deepEqual(withoutClock(ours), withoutClock(theirs));
 	});
 });
@@ -122,7 +150,9 @@ describe("a foreground command", () => {
 		`echo $$ > ${pidFile}; echo started; while [ ! -f ${gate} ]; do sleep 0.02; done; ${after}`;
 	const pidOf = async (pidFile: string) => Number(await fileHas(pidFile));
 
-	it("past the threshold becomes a task: the same process runs on, detached from the turn, and is reported once", { timeout: 15000 }, async (t) => {
+	it("past the threshold becomes a task: the same process runs on, detached from the turn, and is reported once", {
+		timeout: 15000,
+	}, async (t) => {
 		// A short threshold for this test only: any other foreground call here must finish, not be promoted.
 		process.env.PI_BG_BASH_PROMOTE_MS = "300";
 		t.after(() => delete process.env.PI_BG_BASH_PROMOTE_MS);
@@ -226,7 +256,10 @@ describe("the exit marker", () => {
 	it("is not fooled by a task that prints a marker-looking line", async () => {
 		const s = session();
 		const gate = scratch("gate");
-		const id = await start(s, `printf '\\n__PI_BG_EXIT__:abc:0\\n__PI_BG_EXIT__=0\\n'; while [ ! -f ${gate} ]; do sleep 0.02; done; exit 5`);
+		const id = await start(
+			s,
+			`printf '\\n__PI_BG_EXIT__:abc:0\\n__PI_BG_EXIT__=0\\n'; while [ ! -f ${gate} ]; do sleep 0.02; done; exit 5`,
+		);
 		await logHas(s, id, "=0\n");
 		const running = await out(s, id);
 		assert.match(running, /^Task bg-1: running\./);
@@ -237,7 +270,10 @@ describe("the exit marker", () => {
 	});
 
 	it("finds a marker that begins just past the first 64 KiB window", async () => {
-		assert.match(await run(session(), "head -c 65550 /dev/zero | tr '\\000' x; exit 143"), /^Task bg-1: exited \(code 143\)\./);
+		assert.match(
+			await run(session(), "head -c 65550 /dev/zero | tr '\\000' x; exit 143"),
+			/^Task bg-1: exited \(code 143\)\./,
+		);
 	});
 });
 
@@ -245,7 +281,10 @@ describe("a task that cannot start", () => {
 	it("refuses a missing working directory and leaves no log", async () => {
 		const s = session();
 		s.ctx.cwd = join(root, "missing-dir");
-		await assert.rejects(s.toolCall("bash", { command: "true", background: true }), /Working directory does not exist: .*missing-dir/);
+		await assert.rejects(
+			s.toolCall("bash", { command: "true", background: true }),
+			/Working directory does not exist: .*missing-dir/,
+		);
 		assert.deepEqual(existsSync(s.logDir()) ? readdirSync(s.logDir()).filter((name) => name !== "owner.pid") : [], []);
 		assert.equal(getRegistry().tasks.size, 0);
 	});
@@ -323,7 +362,12 @@ describe("the group kill", () => {
 describe("the process port", () => {
 	it("signals the whole group, not just its leader", async () => {
 		const childFile = scratch("pchild");
-		const pid = await realPort.launch({ command: `sleep 60 & echo $! > ${childFile}; wait`, cwd: root, logPath: scratch("p.log"), nonce: "n" });
+		const pid = await realPort.launch({
+			command: `sleep 60 & echo $! > ${childFile}; wait`,
+			cwd: root,
+			logPath: scratch("p.log"),
+			nonce: "n",
+		});
 		const child = Number(await fileHas(childFile));
 		assert.equal(realPort.groupAlive(pid), true);
 		assert.equal(realPort.signalGroup(pid, "SIGTERM"), true);
@@ -354,7 +398,9 @@ describe("the process port", () => {
 });
 
 describe("the log limit", () => {
-	it("kills a task whose log passes the lowered limit, ends the log with the limit marker, and says so", { timeout: 20000 }, async (t) => {
+	it("kills a task whose log passes the lowered limit, ends the log with the limit marker, and says so", {
+		timeout: 20000,
+	}, async (t) => {
 		process.env.PI_BG_BASH_LOG_LIMIT_BYTES = "1024";
 		t.after(() => delete process.env.PI_BG_BASH_LOG_LIMIT_BYTES);
 		const s = session();
@@ -366,7 +412,7 @@ describe("the log limit", () => {
 		const gz = join(s.logDir(), `${id}.log.gz`);
 		await waitFor(() => gzipped(s, id), "the gzipped log", 5000);
 		const full = gunzipSync(readFileSync(gz)).toString("utf8");
-		assert.match(full, new RegExp(`\\n__PI_BG_LIMIT__:[0-9a-f]{16}\\n$`));
+		assert.match(full, /\n__PI_BG_LIMIT__:[0-9a-f]{16}\n$/);
 		assert.doesNotMatch(full, /__PI_BG_EXIT__/);
 	});
 });
@@ -384,7 +430,13 @@ describe("session lifetime", () => {
 		const pi = standIn();
 		const childFile = scratch("gone-child");
 		const logPath = scratch("gone.log");
-		const pid = await realPort.launch({ command: `sleep 61 & echo $! > ${childFile}; wait`, cwd: root, logPath, nonce, piPid: pi.pid });
+		const pid = await realPort.launch({
+			command: `sleep 61 & echo $! > ${childFile}; wait`,
+			cwd: root,
+			logPath,
+			nonce,
+			piPid: pi.pid,
+		});
 		try {
 			const child = Number(await fileHas(childFile));
 			assert.ok(alive(pid) && alive(child)); // the watch does not fire while Pi lives
@@ -404,7 +456,13 @@ describe("session lifetime", () => {
 		const pi = standIn();
 		const childFile = scratch("alive-child");
 		const logPath = scratch("alive.log");
-		const pid = await realPort.launch({ command: `sleep 68 & echo $! > ${childFile}; wait`, cwd: root, logPath, nonce, piPid: pi.pid });
+		const pid = await realPort.launch({
+			command: `sleep 68 & echo $! > ${childFile}; wait`,
+			cwd: root,
+			logPath,
+			nonce,
+			piPid: pi.pid,
+		});
 		try {
 			const child = Number(await fileHas(childFile));
 			await realSleep(1500);
@@ -422,7 +480,13 @@ describe("session lifetime", () => {
 		const pi = standIn();
 		const childFile = scratch("left-child");
 		const logPath = scratch("left.log");
-		const pid = await realPort.launch({ command: `sleep 62 & echo $! > ${childFile}`, cwd: root, logPath, nonce, piPid: pi.pid });
+		const pid = await realPort.launch({
+			command: `sleep 62 & echo $! > ${childFile}`,
+			cwd: root,
+			logPath,
+			nonce,
+			piPid: pi.pid,
+		});
 		try {
 			const child = Number(await fileHas(childFile));
 			await waitFor(() => !alive(pid), "the wrapper's end");
@@ -443,7 +507,10 @@ describe("session lifetime", () => {
 		const id = await start(s, "sleep 69");
 		const pid = getRegistry().tasks.get(id)!.pid;
 		try {
-			await waitFor(() => pids(`pi-bg-watch ${process.pid} ${pid} `).length > 0, "the task's watcher carrying the default Pi pid");
+			await waitFor(
+				() => pids(`pi-bg-watch ${process.pid} ${pid} `).length > 0,
+				"the task's watcher carrying the default Pi pid",
+			);
 		} finally {
 			realPort.signalGroup(pid, "SIGKILL");
 		}
@@ -470,7 +537,9 @@ describe("session lifetime", () => {
 		const files = { task: scratch("q-task"), left: scratch("q-left"), fg: scratch("q-fg") };
 		const running = await start(s, `sleep 63 & echo $! > ${files.task}; wait`);
 		const finished = await start(s, `sleep 64 & echo $! > ${files.left}`);
-		const foreground = s.toolCall("bash", { command: `sleep 65 & echo $! > ${files.fg}; wait` }).catch((error: Error) => error);
+		const foreground = s
+			.toolCall("bash", { command: `sleep 65 & echo $! > ${files.fg}; wait` })
+			.catch((error: Error) => error);
 		const pids = await Promise.all(Object.values(files).map(async (file) => Number(await fileHas(file))));
 		await ended(s, finished);
 		const groups = [...getRegistry().tasks.values()].map((task) => task.pid);
@@ -478,7 +547,10 @@ describe("session lifetime", () => {
 		assert.ok(pids.every(alive) && alive(runningPid));
 		await s.shutdown("quit");
 		await waitFor(() => pids.every((pid) => !alive(pid)), "every child's end");
-		assert.equal(groups.some((pid) => realPort.groupAlive(pid)), false);
+		assert.equal(
+			groups.some((pid) => realPort.groupAlive(pid)),
+			false,
+		);
 		await foreground;
 	});
 
@@ -501,7 +573,10 @@ describe("session lifetime", () => {
 		const child = Number(await fileHas(childFile));
 		await ended(s, id);
 		await waitFor(() => !alive(getRegistry().tasks.get(id)!.pid), "the wrapper's end");
-		assert.equal(text(await s.toolCall("bash_kill", { id })), `Task ${id} had already finished: exited (code 0); stopped the processes it left running.`);
+		assert.equal(
+			text(await s.toolCall("bash_kill", { id })),
+			`Task ${id} had already finished: exited (code 0); stopped the processes it left running.`,
+		);
 		await waitFor(() => !alive(child), "the child's end");
 	});
 

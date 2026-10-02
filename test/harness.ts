@@ -5,14 +5,14 @@
 // timers); the logs stay real files. Contract tests use the real port on real
 // time and never touch the clock. A test file uses one tier: fake time and real
 // processes never meet.
-import { appendFileSync, existsSync, mkdtempSync, openSync, closeSync, readFileSync, rmSync } from "node:fs";
+import { appendFileSync, closeSync, existsSync, mkdtempSync, openSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { mock } from "node:test";
 
 import register from "../src/index.ts";
 import type { LaunchOptions } from "../src/launch.ts";
-import { processPort, realPort, setProcessPort, type ProcessPort } from "../src/port.ts";
+import { type ProcessPort, processPort, realPort, setProcessPort } from "../src/port.ts";
 import { getRegistry, POLL_MS } from "../src/registry.ts";
 
 /** A throwaway root for this test file; `XDG_STATE_HOME` points inside it. */
@@ -179,7 +179,10 @@ export const gzipped = (s: Session, id: string) =>
 	existsSync(join(s.logDir(), `${id}.log.gz`)) && !existsSync(logPath(s, id));
 /** Wait, in real time, until the task's log holds `needle` (contract tests). */
 export const logHas = (s: Session, id: string, needle: string) =>
-	waitFor(() => existsSync(logPath(s, id)) && logText(s, id).includes(needle), `log ${id} holding ${JSON.stringify(needle)}`);
+	waitFor(
+		() => existsSync(logPath(s, id)) && logText(s, id).includes(needle),
+		`log ${id} holding ${JSON.stringify(needle)}`,
+	);
 
 // --- behaviour tier: fake processes and fake time ---
 
@@ -325,7 +328,8 @@ const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
  * now so file ages compare with real mtimes. Nothing waits on a real event here.
  */
 export function fakeClock() {
-	if (processPort() === realPort) throw new Error("fakeClock() needs fakeProcesses() installed first: fake time must never meet a real process");
+	if (processPort() === realPort)
+		throw new Error("fakeClock() needs fakeProcesses() installed first: fake time must never meet a real process");
 	mock.timers.enable({ apis: ["setInterval", "setTimeout", "Date"], now: Date.now() });
 	/** Move the clock `ms` forward in 100 ms steps, letting timer-driven work run after each. */
 	const advance = async (ms: number) => {

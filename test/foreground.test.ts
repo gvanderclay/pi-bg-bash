@@ -4,7 +4,7 @@
 // The commands here are names no shell knows, so a red run never starts
 // anything real.
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readdirSync } from "node:fs";
+import { mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { after, afterEach, beforeEach, describe, it, mock } from "node:test";
 
@@ -12,7 +12,17 @@ import { createBashToolDefinition } from "@earendil-works/pi-coding-agent";
 
 import { foregroundRuns } from "../src/foreground.ts";
 import { getRegistry } from "../src/registry.ts";
-import { cleanup, fakeClock, fakeProcesses, type FakeProcesses, resetRegistry, restoreProcesses, root, session, text } from "./harness.ts";
+import {
+	cleanup,
+	type FakeProcesses,
+	fakeClock,
+	fakeProcesses,
+	resetRegistry,
+	restoreProcesses,
+	root,
+	session,
+	text,
+} from "./harness.ts";
 
 let clock: ReturnType<typeof fakeClock>;
 let procs: FakeProcesses;
@@ -49,12 +59,12 @@ function trackTimers() {
 		const id = originals.setInterval(callback as never, ms as never);
 		pending.add(id);
 		return id;
-	}) as typeof setInterval;
+	}) as unknown as typeof setInterval;
 	globalThis.setTimeout = ((callback: (...args: never[]) => void, ms?: number) => {
 		const id = originals.setTimeout(callback as never, ms as never);
 		pending.add(id);
 		return id;
-	}) as typeof setTimeout;
+	}) as unknown as typeof setTimeout;
 	globalThis.clearInterval = ((id: unknown) => {
 		pending.delete(id);
 		originals.clearInterval(id as never);
@@ -228,7 +238,10 @@ describe("a foreground bash call whose end arrives oddly", () => {
 		const error = await clock.settle(s.toolCall("bash", { command: "slow-build" })).catch((e: Error) => e);
 		assert.ok(error instanceof Error);
 		assert.equal(error.message, "Working directory does not exist");
-		assert.match(text(await s.toolCall("bash", { command: "other-build", background: true })), /^Started background task bg-1\./);
+		assert.match(
+			text(await s.toolCall("bash", { command: "other-build", background: true })),
+			/^Started background task bg-1\./,
+		);
 	});
 
 	it("aborts a turn that ended while the process was being spawned: killed, never promoted", async () => {
@@ -411,7 +424,10 @@ describe("the active foreground runs", () => {
 		const proc = await launched();
 		proc.write("so far\n");
 		await clock.advance(7000);
-		assert.deepEqual([...foregroundRuns()].map((run) => run.command), ["slow-build"]);
+		assert.deepEqual(
+			[...foregroundRuns()].map((run) => run.command),
+			["slow-build"],
+		);
 		[...foregroundRuns()][0].promote();
 		const result = await clock.settle(call);
 		assert.match(text(result), /^Command still running after 7 s; moved to the background as task bg-1\./);

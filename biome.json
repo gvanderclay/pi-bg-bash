@@ -1,0 +1,224 @@
+{
+	"$schema": "https://biomejs.dev/schemas/2.5.14/schema.json",
+	"root": true,
+	"vcs": {
+		"enabled": false,
+		"clientKind": "git",
+		"useIgnoreFile": false
+	},
+	"files": {
+		"ignoreUnknown": false,
+		"includes": ["**/*.ts", "**/*.json", "!**/node_modules", "!**/.scratch", "!pnpm-lock.yaml"]
+	},
+	"formatter": {
+		"enabled": true,
+		"indentStyle": "tab",
+		"lineWidth": 120
+	},
+	"linter": {
+		"enabled": true,
+		"rules": {
+			"preset": "recommended",
+			"complexity": {
+				"useLiteralKeys": "off",
+				"noExcessiveLinesPerFunction": {
+					"level": "error",
+					"options": {
+						"maxLines": 60
+					}
+				},
+				"noExcessiveCognitiveComplexity": {
+					"level": "error",
+					"options": {
+						"maxAllowedComplexity": 15
+					}
+				}
+			},
+			"correctness": {
+				"noUnusedVariables": "error",
+				"noUnusedImports": "error"
+			},
+			"nursery": {
+				"useExhaustiveSwitchCases": "error",
+				"useExplicitType": "error",
+				"noFloatingPromises": "error"
+			},
+			"style": {
+				"noExcessiveLinesPerFile": {
+					"level": "error",
+					"options": {
+						"maxLines": 500
+					}
+				},
+				"noNonNullAssertion": "error",
+				"useImportType": "error",
+				"useExportType": "error",
+				"noEnum": "error",
+				"noNamespace": "error",
+				"noParameterProperties": "error",
+				"noParameterAssign": "error",
+				"noNestedTernary": "error",
+				"noDefaultExport": "error"
+			},
+			"suspicious": {
+				"noExplicitAny": "error"
+			}
+		}
+	},
+	"overrides": [
+		{
+			"includes": ["src/foreground.ts"],
+			"linter": {
+				"rules": {
+					"complexity": {
+						"noExcessiveLinesPerFunction": "off",
+						"noExcessiveCognitiveComplexity": "off"
+					},
+					"nursery": {
+						"useExplicitType": "off"
+					}
+				}
+			}
+		},
+		{
+			"includes": ["src/index.ts"],
+			"linter": {
+				"rules": {
+					"style": {
+						"noNestedTernary": "off",
+						"noDefaultExport": "off"
+					},
+					"complexity": {
+						"noExcessiveLinesPerFunction": "off",
+						"noExcessiveCognitiveComplexity": "off"
+					},
+					"nursery": {
+						"useExplicitType": "off"
+					}
+				}
+			}
+		},
+		{
+			"includes": ["src/kill.ts"],
+			"linter": {
+				"rules": {
+					"nursery": {
+						"useExplicitType": "off"
+					}
+				}
+			}
+		},
+		{
+			"includes": ["src/logs.ts"],
+			"linter": {
+				"rules": {
+					"complexity": {
+						"noExcessiveCognitiveComplexity": "off"
+					},
+					"suspicious": {
+						"noImplicitAnyLet": "off"
+					},
+					"nursery": {
+						"useExplicitType": "off"
+					}
+				}
+			}
+		},
+		{
+			"includes": ["src/logview.ts"],
+			"linter": {
+				"rules": {
+					"nursery": {
+						"useExplicitType": "off"
+					}
+				}
+			}
+		},
+		{
+			"includes": ["src/output.ts"],
+			"linter": {
+				"rules": {
+					"style": {
+						"noNestedTernary": "off"
+					},
+					"complexity": {
+						"noExcessiveCognitiveComplexity": "off"
+					}
+				}
+			}
+		},
+		{
+			"includes": ["src/port.ts"],
+			"linter": {
+				"rules": {
+					"nursery": {
+						"useExplicitType": "off"
+					}
+				}
+			}
+		},
+		{
+			"includes": ["src/registry.ts"],
+			"linter": {
+				"rules": {
+					"suspicious": {
+						"noAssignInExpressions": "off"
+					},
+					"style": {
+						"noNestedTernary": "off"
+					},
+					"nursery": {
+						"useExplicitType": "off"
+					}
+				}
+			}
+		},
+		{
+			"includes": ["src/sanitize.ts"],
+			"linter": {
+				"rules": {
+					"suspicious": {
+						"noControlCharactersInRegex": "off"
+					}
+				}
+			}
+		},
+		{
+			"includes": ["test/**", "**/*.test.ts"],
+			"linter": {
+				"rules": {
+					"complexity": {
+						"noExcessiveLinesPerFunction": "off",
+						"noExcessiveCognitiveComplexity": "off",
+						"noCommaOperator": "off"
+					},
+					"style": {
+						"noExcessiveLinesPerFile": "off",
+						"noNestedTernary": "off",
+						"noNonNullAssertion": "off"
+					},
+					"suspicious": {
+						"noTemplateCurlyInString": "off",
+						"noAssignInExpressions": "off"
+					},
+					"nursery": {
+						"useExplicitType": "off"
+					}
+				}
+			}
+		}
+	],
+	"javascript": {
+		"formatter": {
+			"quoteStyle": "double"
+		}
+	},
+	"assist": {
+		"enabled": true,
+		"actions": {
+			"source": {
+				"organizeImports": "on"
+			}
+		}
+	}
+}
