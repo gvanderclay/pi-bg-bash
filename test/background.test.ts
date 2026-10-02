@@ -128,6 +128,7 @@ describe("the bash tool's schema", () => {
 		const builtin = createBashToolDefinition(root);
 		assert.ok(tool.description.startsWith(builtin.description));
 		assert.match(tool.description, /do not sleep or poll `bash_output` to wait for it/);
+		assert.match(tool.description, /never run `sleep N` and then check.*`gh run watch <run-id> --exit-status`/);
 		const properties = Object.keys((tool.parameters as { properties: object }).properties);
 		assert.deepEqual(properties.sort(), ["background", "command", "timeout"]);
 	});

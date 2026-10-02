@@ -18,6 +18,9 @@ import { attach, endSession, getRegistry, killTask, setContext, startTask } from
 const BACKGROUND_DESCRIPTION =
 	"Set `background: true` to start the command detached and return a task id at once; " +
 	"the agent is woken when it finishes. " +
+	"To wait for something to finish (a CI run, a deploy, a server coming up), never run `sleep N` and then check; " +
+	"run a command that blocks until it finishes, with `background: true`: `gh run watch <run-id> --exit-status`, " +
+	"`gh pr checks <number> --watch`, or `until <check>; do sleep 10; done`. " +
 	"A foreground command with no `timeout` that is still running after 120 s (unless it starts with `sleep`) moves to the background on its own and the call returns its task id. " +
 	"Background completion is reported automatically; do not sleep or poll `bash_output` to wait for it.";
 
