@@ -1,8 +1,75 @@
 # pi-bg-bash
 
-Replaces the model's `bash` tool with Pi's own `bash` plus a `background`
-flag. A call with `background: true` starts the command detached, returns a
-task id at once, and reports the result when the command exits.
+A Pi extension that lets the model run shell commands in the background. It
+replaces Pi's `bash` tool with the same tool plus a `background` flag: a call
+with `background: true` starts the command detached, returns a task id at once,
+and wakes the agent with the result when the command exits. A foreground
+command that runs for more than two minutes moves to the background on its
+own, so a slow build or a dev server never blocks the session.
+
+## Install
+
+You need:
+
+- Pi on macOS or Linux (not Windows). Pi 1.0.0 is the version pi-bg-bash is
+  tested with. Pi supplies the peer dependencies
+  `@earendil-works/pi-coding-agent` and `typebox`.
+- A POSIX `sh`. The command itself runs in Pi's own shell (bash when present).
+- No other extension that replaces the `bash` tool or registers `/bg` or
+  `ctrl+shift+b`. [pi-bg-tasks](https://www.npmjs.com/package/pi-bg-tasks)
+  claims all three, so install only one of the two.
+
+Install the package from npm:
+
+```bash
+pi install npm:pi-bg-bash
+```
+
+To follow the latest commit instead, install it from GitHub:
+
+```bash
+pi install git:github.com/gvanderclay/pi-bg-bash
+```
+
+The package has no runtime dependencies and no build step.
+
+## First use
+
+Ask the model for something that keeps running, for example "start the dev
+server in the background and tell me when it is up". It calls `bash` with
+`background: true` and gets back a task id such as `bg-1`. The footer shows
+`bg: 1` while the task runs, and the model can read its output with
+`bash_output` while it works on something else. When the command exits, the
+agent receives one message with the exit state and the last lines of output,
+which starts a turn if it was idle.
+
+Run `/bg` to see every task, and pick a running one to kill it. Press
+`ctrl+shift+b` while a foreground command runs to move it to the background
+at once instead of waiting.
+
+## What it adds
+
+- The `bash` tool keeps Pi's parameters and adds `background`. Without it a
+  call runs in the foreground as before, and moves to the background after
+  120 s unless it has an explicit `timeout` or starts with `sleep`.
+- `bash_output({ id, latest?, filter? })` reads a task's output from where the
+  last read stopped, or only the newest output, optionally filtered by a regex.
+- `bash_tasks()` lists every task of the session with its state and runtime.
+- `bash_kill({ id })` stops a task and everything it started.
+- `/bg` lists the tasks and kills the one you pick.
+- `ctrl+shift+b` moves the running foreground command to the background. It
+  needs a terminal that reports modified keys (the kitty keyboard protocol or
+  `modifyOtherKeys`); inside tmux, also `set -g extended-keys on`.
+
+Tasks belong to the session that started them. `/reload` keeps them; quitting
+or switching sessions (`new`, `resume`, `fork`) kills them, and if Pi crashes a
+watcher process kills them. Logs live under
+`$XDG_STATE_HOME/pi-bg/<session-id>/` (default `~/.local/state`) and are
+removed after 7 days.
+
+The rest of this README describes the behaviour in detail.
+
+## Background tasks
 
 - **Wrapper:** `sh` spawned `detached`, stdout and stderr on the log's file
   descriptor, the handle `unref()`ed. It runs the command, passed as an
@@ -115,7 +182,7 @@ output kept.
   promotes every one of them, since the turn stays blocked until they all
   finish. `ctrl+shift+b` needs a terminal that reports modified keys, through
   the kitty keyboard protocol or `modifyOtherKeys`; inside tmux it needs
-  `extended-keys on` as well, which this setup sets.
+  `extended-keys on` as well (`set -g extended-keys on`).
 - **Hint:** 2 s into a foreground command, a widget below the editor shows
   "(ctrl+shift+b to background)", so fast commands never flash it. The moment
   the command's exit marker is seen the hint timer is cancelled and a shown
@@ -229,56 +296,3 @@ Tasks belong to the session that started them.
   The task's state is not changed.
 
 Uses no `pi.events` hook.
-
-## Install
-
-```bash
-pi install <path to this directory>
-```
-
-The package has no dependencies and no build step. The `pi` manifest loads only
-`./index.ts`; the tests under `test/` are not loaded by Pi. Installed in the
-daily route (`pi/.pi/agent/settings.json`). `npm:pi-bg-tasks` claims the same
-`bash` tool, `/bg` command and `ctrl+shift+b` shortcut, so a root must install
-only one of the two.
-
-## Requirements
-
-- Pi, with `pi.registerTool`, `pi.sendMessage` and `ctx.ui.setStatus`.
-- `@earendil-works/pi-coding-agent` for `createBashToolDefinition`,
-  `truncateTail`, `getShellConfig` and the limits, declared as a peer
-  dependency and supplied by Pi.
-- `typebox` for the tools' parameter schema, a host-provided peer dependency.
-- A POSIX `sh`; the command itself runs in Pi's shell (bash when present).
-
-## Tests
-
-`make test-pi-bg` runs two tiers. Fake time and real processes never meet in one
-test file, and `--test-timeout` makes a call that never settles fail the run
-instead of hanging it.
-
-- **Behaviour tests** (`background`, `foreground`, `kill`, `logs`, `output`,
-  `poller`, `sanitize`): the extension
-  runs over a scripted fake process table behind the process port, on
-  `node:test` mock timers that start at the real now. The test decides when a
-  task writes, exits (writing the marker with its nonce), traps SIGTERM, leaves a
-  child or a zombie group, dies without a marker or survives SIGKILL. Logs are
-  real files under a temporary `XDG_STATE_HOME`. `clock.settle(call)` ticks the
-  clock until a call settles; no test awaits a timer-driven call without it.
-- **Lifetime** (`lifetime`, behaviour tier): reload hand-over and the single
-  poller, session-end kills (finished tasks, foreground in flight, pending
-  spawn), the finished-task kill, and the pid-reuse guard.
-- **Contract tests** (`contract`): the real port with short real `sh` commands
-  on real time and no mock timers. The Pi-gone watch runs against a stand-in
-  `sleep` as Pi's pid: a task dies when it is killed, a task stays alive past one
-  watch period while Pi lives, and a child a finished command left behind dies
-  with the GONE marker. Also covered: the watcher's default Pi pid and its exit
-  once the group empties, a real session end, foreground parity with Pi's bash
-  (including late output after the marker and a real promotion via
-  `PI_BG_BASH_PROMOTE_MS`), quoting and heredocs, Pi's shell and environment, the
-  marker and nonce (grandchild, spoofed marker, marker across a read window), the
-  group kill (child, `trap '' TERM`), the errno mapping (including the macOS
-  zombie-only group, macOS only), spawn failures and exclusive log creation,
-  and the log limit (a task printing past `PI_BG_BASH_LOG_LIMIT_BYTES` is
-  killed with the `__PI_BG_LIMIT__` marker). `PI_BG_BASH_GRACE_MS` shortens the
-  kill's grace period.
