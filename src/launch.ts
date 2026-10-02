@@ -30,11 +30,12 @@ import * as pi from "@earendil-works/pi-coding-agent";
  * only this wrapper can write a valid one. The wrapper's own stderr is silenced,
  * so a job notice such as "Killed: 9" for a command that killed itself stays out of
  * the log; the command's stderr still goes to the log, through fd 3, which the
- * command does not inherit.
+ * command does not inherit. The command runs in a subshell because dash prints
+ * that notice while the command's own `2>&3` is still in effect.
  */
 const WRAPPER = [
 	"cmd=$1; nonce=$2; shift 3; exec 3>&2 2>/dev/null",
-	'"$@" "$cmd" 2>&3 3>&-; code=$?',
+	'( "$@" "$cmd" 2>&3 3>&- ); code=$?',
 	'printf "\\n__PI_BG_EXIT__:%s:%s\\n" "$nonce" "$code"',
 ].join("\n");
 

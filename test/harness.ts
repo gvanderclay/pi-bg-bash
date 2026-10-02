@@ -324,6 +324,15 @@ export function restoreProcesses(): void {
 const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
 
 /**
+ * Wait up to 5 s of real time for `done`. Fake time can run out before real I/O
+ * (a file stream, a gzip) finishes on a loaded machine; this gives it time to.
+ */
+async function realGrace(done: () => boolean): Promise<void> {
+	const end = performance.now() + 5000;
+	while (!done() && performance.now() < end) await flush();
+}
+
+/**
  * Fake time: `setInterval`, `setTimeout` and `Date` are mocked, starting at the real
  * now so file ages compare with real mtimes. Nothing waits on a real event here.
  */
@@ -350,6 +359,7 @@ export function fakeClock() {
 		/** Advance until `done` holds; throws when it has not within `maxMs` of fake time. */
 		until: async (done: () => boolean, maxMs = 120_000) => {
 			for (let t = 0; t < maxMs && !done(); t += 100) await advance(100);
+			await realGrace(done);
 			if (!done()) throw new Error(`condition not reached in ${maxMs} ms of fake time`);
 		},
 		/** Advance until the call settles and return its result; a call that never settles fails the test. */
@@ -360,6 +370,7 @@ export function fakeClock() {
 				(error) => (state = { ok: false, error }),
 			);
 			for (let t = 0; t < maxMs && state === undefined; t += 100) await advance(100);
+			await realGrace(() => state !== undefined);
 			if (state === undefined) throw new Error(`call did not settle in ${maxMs} ms of fake time`);
 			if (!state.ok) throw state.error;
 			return state.value;

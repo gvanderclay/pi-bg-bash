@@ -390,6 +390,10 @@ async function stopLeftovers(task: Task): Promise<Leftovers> {
 	// A group the poller already saw empty is skipped outright: its pid may have
 	// been reused by an unrelated group, which must not be signalled.
 	if (getRegistry().emptyGroups.has(task.pid) || !processPort().groupAlive(task.pid)) return "none";
+	// The wrapper writes the marker just before it exits, and Linux counts it until
+	// Node reaps it, so the group may hold only the wrapper. Give it up to 200 ms to go.
+	for (let i = 0; i < 20 && processPort().pidAlive(task.pid); i++) await new Promise((r) => setTimeout(r, 10));
+	if (!processPort().groupAlive(task.pid)) return "none";
 	const how = await killGroup(task.pid);
 	return how === "gone" ? "none" : how === "stopped" ? "stopped" : "stuck";
 }
