@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-03
+
 ### Added
 
 - `bash` takes `waitFor`, a text to wait for in a foreground command's output.
@@ -83,7 +85,8 @@ author's dotfiles; the changes below are against that copy.
 - Two behaviour tests that waited a fixed number of fake-time ticks for real
   file I/O now wait for the I/O itself, so they pass on a loaded machine.
 
-[Unreleased]: https://github.com/gvanderclay/pi-bg-bash/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/gvanderclay/pi-bg-bash/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/gvanderclay/pi-bg-bash/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/gvanderclay/pi-bg-bash/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/gvanderclay/pi-bg-bash/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/gvanderclay/pi-bg-bash/releases/tag/v0.1.0
