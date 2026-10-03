@@ -8,6 +8,7 @@ import { join } from "node:path";
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
+import { debug, debugError, exitFields, taskFields } from "./debug.ts";
 import type { ForegroundRun } from "./foreground.ts";
 import { killGroup, killGroupNow } from "./kill.ts";
 import { type LaunchOptions, sessionLogDir } from "./launch.ts";
@@ -152,7 +153,9 @@ export async function endSession(): Promise<void> {
 	registry.emptyGroups.clear();
 	registry.tasks.clear();
 	updateFooter(registry);
-	await Promise.allSettled([...pids].map((pid) => killGroup(pid)));
+	debug("session-end", { tasks: tasks.length, groups: [...pids] });
+	const killed = await Promise.allSettled([...pids].map((pid) => killGroup(pid)));
+	for (const result of killed) if (result.status === "rejected") debugError("session-end-kill", result.reason);
 }
 
 /** A fresh load: use this `pi` and context from now on, and replace the poller. */
@@ -177,7 +180,8 @@ function updateFooter(registry: Registry): void {
 	try {
 		const running = runningCount(registry);
 		registry.ctx?.ui.setStatus("bg", running > 0 ? `bg: ${running}` : undefined);
-	} catch {
+	} catch (error) {
+		debugError("footer", error);
 		// the context went stale (session replaced or reloaded); the next update redraws
 	}
 }
@@ -229,6 +233,7 @@ export function makeTask(
 export function adopt(task: Task): Task {
 	const registry = getRegistry();
 	registry.tasks.set(task.id, task);
+	debug("task-start", { ...taskFields(task), cwd: task.cwd, deadline: task.deadline });
 	updateFooter(registry);
 	startPollerIfNeeded(registry);
 	return task;
@@ -290,7 +295,9 @@ function startPollerIfNeeded(registry: Registry): void {
 function checkLogLimits(registry: Registry): void {
 	for (const task of registry.tasks.values()) {
 		if (task.state !== "running" || task.killing !== undefined) continue;
-		if (overLogLimit(task)) killForLogLimit(registry, task).catch(() => {});
+		if (overLogLimit(task)) {
+			killForLogLimit(registry, task).catch((error) => debugError("log-limit-kill", error, taskFields(task)));
+		}
 	}
 	if (runningCount(registry) === 0) stopLimitTimer(registry);
 }
@@ -312,6 +319,7 @@ function refresh(registry: Registry, task: Task): void {
 		marker = locateMarker(task);
 		task.readFailures = 0;
 	} catch (error) {
+		debugError("locate-marker", error, { ...taskFields(task), alive, failures: task.readFailures + 1 });
 		if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
 			// A missing log means the exit can no longer be known. Any other failure may pass:
 			// wait it out while the pid lives, and give up only after several in a row with it dead.
@@ -329,6 +337,7 @@ function refresh(registry: Registry, task: Task): void {
 	// leftover group keeps the pid, so tasks with leftovers stay covered.
 	if (marker !== undefined && !processPort().groupAlive(task.pid)) registry.emptyGroups.add(task.pid);
 	updateFooter(registry);
+	debug("task-exit", { ...exitFields(task), by: "poller" });
 }
 
 /** One task's tick: settle it, enforce its deadline and the log limit, then report it if it ended and is unreported. */
@@ -337,11 +346,16 @@ function pollTask(registry: Registry, task: Task): void {
 	refresh(registry, task);
 	if (task.state === "running") {
 		if (overLogLimit(task)) {
-			killForLogLimit(registry, task).catch(() => {}); // still running: the next tick asks again
+			// still running: the next tick asks again
+			killForLogLimit(registry, task).catch((error) => debugError("log-limit-kill", error, taskFields(task)));
 			return;
 		}
 		if (task.deadline !== undefined && Date.now() >= task.deadline) {
-			killTask(task, "timed out", { notify: true }).catch(() => {}); // still running: the next tick asks again
+			debug("deadline", { ...taskFields(task), deadline: task.deadline });
+			// still running: the next tick asks again
+			killTask(task, "timed out", { notify: true }).catch((error) =>
+				debugError("deadline-kill", error, taskFields(task)),
+			);
 		}
 		return;
 	}
@@ -363,6 +377,7 @@ export async function killTask(
 	options: { notify: boolean },
 ): Promise<"finished" | "gone" | "killed" | "stuck" | "cleared" | "leftover-stuck"> {
 	const registry = getRegistry();
+	debug("kill-request", { ...taskFields(task), reason, notify: options.notify, joined: task.killing !== undefined });
 	if (task.killing === undefined) {
 		refresh(registry, task);
 		if (task.state !== "running") {
@@ -372,6 +387,7 @@ export async function killTask(
 				task.clearing = undefined;
 			});
 			const left = await task.clearing;
+			debug("kill", { ...exitFields(task), reason, leftovers: left });
 			return left === "none" ? "finished" : left === "stopped" ? "cleared" : "leftover-stuck";
 		}
 		const stopping = stopGroup(registry, task, reason, options.notify);
@@ -413,10 +429,12 @@ async function stopGroup(
 		task.reason = reason;
 	}
 	updateFooter(registry);
+	debug("kill", { ...exitFields(task), reason, outcome: how });
 	if (notify) {
 		try {
 			notifyOnce(registry, task);
-		} catch {
+		} catch (error) {
+			debugError("notify", error, taskFields(task));
 			// a later tick retries the message
 		}
 	}
@@ -437,7 +455,8 @@ async function killForLogLimit(registry: Registry, task: Task): Promise<"killed"
 		// Kill first, so whatever the command writes while dying stays before the marker.
 		try {
 			appendLimitMarker(task);
-		} catch {
+		} catch (error) {
+			debugError("limit-marker", error, taskFields(task));
 			// the marker could not be written (EACCES, ENOSPC); the reason must survive without it
 		}
 		task.endedAt = Date.now();
@@ -445,7 +464,8 @@ async function killForLogLimit(registry: Registry, task: Task): Promise<"killed"
 		let marker: Marker | undefined;
 		try {
 			marker = locateMarker(task);
-		} catch {
+		} catch (error) {
+			debugError("locate-marker", error, taskFields(task));
 			marker = undefined; // an unreadable log cannot supply one
 		}
 		if (marker !== undefined) {
@@ -460,9 +480,11 @@ async function killForLogLimit(registry: Registry, task: Task): Promise<"killed"
 		// A group known empty must never be signalled again: the pid may be reused.
 		if (how !== "stuck") registry.emptyGroups.add(task.pid);
 		updateFooter(registry);
+		debug("kill", { ...exitFields(task), reason: "log limit passed", outcome: how });
 		try {
 			notifyOnce(registry, task);
-		} catch {
+		} catch (error) {
+			debugError("notify", error, taskFields(task));
 			// a later tick retries the message
 		}
 		return how === "gone" ? "gone" : how === "stuck" ? "stuck" : "killed";
@@ -480,7 +502,8 @@ function poll(registry: Registry): void {
 	for (const task of registry.tasks.values()) {
 		try {
 			pollTask(registry, task);
-		} catch {
+		} catch (error) {
+			debugError("poll", error, taskFields(task));
 			// try again next tick
 		}
 	}
@@ -500,5 +523,6 @@ function notifyOnce(registry: Registry, task: Task): void {
 	// Gzip only after the message is out (Q21). A group that is still alive (a
 	// `stuck` group, or a child the command left) may still write to the log, so
 	// leave it plain; the 7-day cleanup handles it.
-	if (!processPort().groupAlive(task.pid)) void gzipLog(task).catch(() => {});
+	if (!processPort().groupAlive(task.pid))
+		void gzipLog(task).catch((error) => debugError("gzip", error, taskFields(task)));
 }

@@ -18,6 +18,7 @@ import {
 	type ExtensionToolContext,
 } from "@earendil-works/pi-coding-agent";
 
+import { debug, debugError, taskFields } from "./debug.ts";
 import { killGroupNow } from "./kill.ts";
 import { resolveShell, SESSION_ENV_KEYS } from "./launch.ts";
 import { markerNeedle, openView, type View } from "./logview.ts";
@@ -44,8 +45,8 @@ export type ForegroundRun = {
 	command: string;
 	/** When the command started, in `Date.now()` terms. */
 	startedAt: number;
-	/** Turn the command into a background task and end the call. Does nothing once the call is over. */
-	promote(): void;
+	/** Turn the command into a background task and end the call. Does nothing once the call is over. `by` is only for the debug log. */
+	promote(by?: "timer" | "shortcut"): void;
 };
 
 /** The foreground calls running now, not yet promoted or ended. Kept in the registry so a reloaded copy of this module sees them. */
@@ -104,6 +105,7 @@ function operations(ctx: ExtensionContext, run: Run) {
 			try {
 				pid = await launchGroup({ command, cwd, logPath, nonce, shell, sessionEnv });
 			} catch (error) {
+				debugError("foreground-launch", error, { command });
 				release(reservation);
 				throw error;
 			}
@@ -115,7 +117,8 @@ function operations(ctx: ExtensionContext, run: Run) {
 				let view: View;
 				try {
 					view = openView(task);
-				} catch {
+				} catch (error) {
+					debugError("foreground-view", error, taskFields(task));
 					return undefined; // a log that cannot be read yields no output and no marker now
 				}
 				try {
@@ -148,7 +151,8 @@ function operations(ctx: ExtensionContext, run: Run) {
 					hintShown = false;
 					try {
 						if (ctx.hasUI) ctx.ui.setWidget(HINT_KEY, undefined);
-					} catch {
+					} catch (error) {
+						debugError("hint-clear", error);
 						// the context went stale (session replaced or reloaded); the widget is gone with it
 					}
 				};
@@ -209,14 +213,18 @@ function operations(ctx: ExtensionContext, run: Run) {
 							() => {
 								try {
 									pump(true);
-								} catch {
+								} catch (error) {
+									debugError("foreground-stop-pump", error, taskFields(task));
 									// the log is gone: nothing more to show
 								}
 								rmSync(logPath, { force: true });
 								release(reservation);
 								reject(error);
 							},
-							(killError) => reject(killError),
+							(killError) => {
+								debugError("foreground-stop-kill", killError, taskFields(task));
+								reject(killError);
+							},
 						);
 					});
 				};
@@ -224,10 +232,11 @@ function operations(ctx: ExtensionContext, run: Run) {
 					stop(new Error("aborted"));
 				}
 				/** The one promotion path: register the live process as a task and end `exec` so the delegate returns. */
-				function promote() {
+				function promote(by: "timer" | "shortcut" = "shortcut") {
 					if (done) return;
 					check(); // a command that just ended ends normally
 					if (done || exitCode !== null) return;
+					debug("promote", { ...taskFields(task), by, elapsedMs: Date.now() - startedAt });
 					finish(() => {
 						pump(true);
 						// The call shows the output up to here; `bash_output` goes on after it.
@@ -239,14 +248,15 @@ function operations(ctx: ExtensionContext, run: Run) {
 				}
 				getRegistry().foreground.add(handle);
 				if (timeout !== undefined) timer = setTimeout(() => stop(new Error(`timeout:${timeout}`)), timeout * 1000);
-				if (promotable(command, timeout)) promoteTimer = setTimeout(promote, promoteMs());
+				if (promotable(command, timeout)) promoteTimer = setTimeout(() => promote("timer"), promoteMs());
 				if (ctx.hasUI)
 					hintTimer = setTimeout(() => {
 						try {
 							if (!ctx.hasUI) return;
 							hintShown = true;
 							ctx.ui.setWidget(HINT_KEY, [HINT_TEXT], { placement: "belowEditor" });
-						} catch {
+						} catch (error) {
+							debugError("hint-show", error);
 							// the context went stale before the hint fired; no widget, and the run still ends
 						}
 					}, HINT_MS);

@@ -10,6 +10,7 @@ import { createBashToolDefinition, type ExtensionAPI } from "@earendil-works/pi-
 import { Type } from "typebox";
 
 import { bgCommand } from "./bg.ts";
+import { rotateDebugLog } from "./debug.ts";
 import { foregroundRuns, PROMOTE_MS, runForeground } from "./foreground.ts";
 import { GRACE_MS } from "./kill.ts";
 import { cleanupOldLogs } from "./logs.ts";
@@ -36,7 +37,7 @@ export default function (pi: ExtensionAPI): void {
 			// One press promotes every foreground call in flight: with parallel tool
 			// calls the turn stays blocked until all finish, so several can be running
 			// at once.
-			for (const run of foregroundRuns()) run.promote();
+			for (const run of foregroundRuns()) run.promote("shortcut");
 		},
 	});
 	const builtin = createBashToolDefinition(process.cwd());
@@ -133,6 +134,7 @@ export default function (pi: ExtensionAPI): void {
 	});
 	pi.on("session_start", (_event, ctx) => {
 		setContext(ctx);
+		rotateDebugLog();
 		cleanupOldLogs(getRegistry().tasks.values());
 	});
 	// Tasks belong to the session: a reload keeps them (the new load takes them over), every other end kills them.
