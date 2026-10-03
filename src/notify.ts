@@ -86,7 +86,7 @@ export function completionText(task: Task): string {
 		: "Last output:";
 	return [
 		`Background task ${task.id} finished: ${stateText(task)}, ran ${runtimeText(task)}.`,
-		`Command: ${task.command}`,
+		`Command: ${oneLine(task.command)}`,
 		tail === "" ? "(no output)" : `${label}\n${tail}`,
 	].join("\n");
 }

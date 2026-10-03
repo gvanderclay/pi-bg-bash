@@ -62,6 +62,19 @@ describe("bash with background: true", () => {
 		);
 	});
 
+	it("shows the command on one line, cut to 200 characters, in the completion message", async () => {
+		const s = session();
+		const multi = await start(s, "echo a\necho b");
+		const long = await start(s, `echo ${"x".repeat(300)}`);
+		procs.of(multi).exit(0);
+		procs.of(long).exit(0);
+		await clock.until(() => s.sent.length > 1);
+		const contents = s.sent.map((m) => m.message.content);
+		assert.ok(contents.some((c) => c.includes("\nCommand: echo a ⏎ echo b\n")));
+		const cut = `echo ${"x".repeat(300)}`.slice(0, 200);
+		assert.ok(contents.some((c) => c.includes(`\nCommand: ${cut}…\n`)));
+	});
+
 	it("reports a non-zero exit with its code and says when there was no output", async () => {
 		const s = session();
 		const id = await start(s, "echo boom; exit 7");

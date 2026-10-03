@@ -16,6 +16,8 @@ follows [Semantic Versioning](https://semver.org/).
   on a plain pick, in RPC mode too: it asks first. The `/bg` tests in
   `test/kill.test.ts` and `test/lifetime.test.ts` are updated for the new keys
   and the confirmation.
+- The completion message shows the command on one line (newlines as ` ⏎ `, cut
+  to 200 characters), as `bash_tasks` and `/bg` do.
 - `@earendil-works/pi-tui` is a new peer dependency, provided by Pi.
 
 ## [0.1.2] - 2026-10-02
