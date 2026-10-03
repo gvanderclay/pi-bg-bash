@@ -50,12 +50,15 @@ at once instead of waiting.
 
 ## What it adds
 
-- The `bash` tool keeps Pi's parameters and adds `background`. Without it a
+- The `bash` tool keeps Pi's parameters and adds `background` and `waitFor`. Without `background` a
   call runs in the foreground as before, and moves to the background after
   120 s unless it has an explicit `timeout` or starts with `sleep`. Its
   description tells the model to wait for something to finish (a CI run, a
   server coming up) with a blocking command such as `gh run watch <run-id>
   --exit-status` and `background: true`, never `sleep N` and then a check.
+  `waitFor: "<text>"` (foreground only) returns as soon as the text appears in
+  the output while the command keeps running as a task, for a server that
+  should stay up.
 - `bash_output({ id, latest?, filter? })` reads a task's output from where the
   last read stopped, or only the newest output, optionally filtered by a regex.
 - `bash_tasks()` lists every task of the session with its state and runtime.
@@ -180,6 +183,20 @@ output kept.
   (never re-read). A truncated output's "Full output" footer points at the task's
   log, not at Pi's temp file, which is deleted; the result carries no `details`.
   The text says how long the command had actually run.
+- **`waitFor`:** a plain substring (not a regex) matched against the stripped
+  output as it arrives, including across two reads and inside a line that has
+  no newline yet. On a match the call is promoted through the same `promote()`,
+  at once, even for a command starting with `sleep` or with an explicit
+  `timeout`, and answers `"<text>" appeared after N s; the command keeps running
+  as background task <id>. ... Output so far: ...`. An explicit `timeout` then
+  becomes the task's deadline (`startedAt` plus `timeout`, as for
+  `background: true`); until a match it still kills the foreground call at the
+  `timeout`. If the call ends without a match (the command exits, the 120 s
+  promotion or `ctrl+shift+b` fires, or it fails), the result also says
+  `"<text>" never appeared in the output.`. `waitFor` with `background: true`
+  and an empty `waitFor` are tool errors before anything starts. A match sends
+  no message of its own; the completion message comes when the task ends. An
+  escape sequence split across two reads is not stripped before matching.
 - **Not promoted:** a command with any explicit `timeout` (killed at it) or one
   starting with `sleep`. `PI_BG_BASH_PROMOTE_MS` shortens the threshold, for the
   contract test.
@@ -215,7 +232,7 @@ and nothing else changes. A failed write to the log is dropped, never raised.
   `bash_tasks`).
 - **Events:** `task-start`, `task-exit` (`state`, `exitCode`), `kill-request`
   and `kill` (`reason`, `outcome`; a log-limit kill has that `reason`),
-  `deadline`, `promote` (`by: "timer"` or `"shortcut"`, `elapsedMs`),
+  `deadline`, `promote` (`by: "timer"`, `"shortcut"` or `"waitFor"`, `elapsedMs`),
   `session-end` (the task count and the groups it kills, with an `error` line
   for each kill that fails) and `rotate`.
 - **Errors:** every error the extension swallows or downgrades is an `error`

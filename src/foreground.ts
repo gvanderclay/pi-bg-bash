@@ -10,6 +10,7 @@
 // Every running call is in `foregroundRuns()` with a `promote` handle: that is
 // the one promotion path, for the timer here and for any other trigger.
 import { rmSync } from "node:fs";
+import { StringDecoder } from "node:string_decoder";
 
 import {
 	type BashOperations,
@@ -46,7 +47,7 @@ export type ForegroundRun = {
 	/** When the command started, in `Date.now()` terms. */
 	startedAt: number;
 	/** Turn the command into a background task and end the call. Does nothing once the call is over. `by` is only for the debug log. */
-	promote(by?: "timer" | "shortcut"): void;
+	promote(by?: "timer" | "shortcut" | "waitFor"): void;
 };
 
 /** The foreground calls running now, not yet promoted or ended. Kept in the registry so a reloaded copy of this module sees them. */
@@ -86,7 +87,7 @@ function heldBack(data: Buffer, nonce: string, last: boolean): number {
 }
 
 /** What a promotion leaves for the call's answer: the task and how long the command had run. */
-type Run = { task: Task | undefined; elapsedMs: number };
+type Run = { task: Task | undefined; elapsedMs: number; waitFor?: string; matched: boolean };
 
 /** The `exec` of one foreground call. `run.task` is set when the command was promoted. */
 function operations(ctx: ExtensionContext, run: Run) {
@@ -112,6 +113,18 @@ function operations(ctx: ExtensionContext, run: Run) {
 			const startedAt = Date.now();
 			const task = makeTask(reservation, { command, cwd, pid, startedAt });
 			let position = 0;
+			// `waitFor` is matched on the stripped output as it arrives. `tail` is the last
+			// `waitFor.length - 1` stripped characters, so a match can span two reads.
+			// ponytail: an escape sequence split across two reads leaves its first half in the text; a full-line split is the usual case, add a held-back ESC tail if it matters.
+			const decoder = new StringDecoder("utf8");
+			let tail = "";
+			const scan = (chunk: Buffer) => {
+				const { waitFor } = run;
+				if (waitFor === undefined || run.matched) return;
+				const text = tail + sanitize(decoder.write(chunk));
+				if (text.includes(waitFor)) run.matched = true;
+				else tail = text.slice(Math.max(0, text.length - (waitFor.length - 1)));
+			};
 			/** Feed everything new in the log (the marker cut out) to `onData`; the marker's exit code once it has appeared. */
 			const pump = (last = false): { code: number } | undefined => {
 				let view: View;
@@ -125,7 +138,10 @@ function operations(ctx: ExtensionContext, run: Run) {
 					if (view.size > position) {
 						const data = view.read(position, view.size);
 						const keep = view.marker === undefined ? heldBack(data, nonce, last) : 0;
-						if (data.length > keep) onData(data.subarray(0, data.length - keep));
+						if (data.length > keep) {
+							onData(data.subarray(0, data.length - keep));
+							scan(data.subarray(0, data.length - keep));
+						}
 						position += data.length - keep;
 					}
 					return view.marker === undefined ? undefined : { code: view.marker.code };
@@ -142,6 +158,7 @@ function operations(ctx: ExtensionContext, run: Run) {
 				let hintTimer: ReturnType<typeof setTimeout> | undefined;
 				let hintShown = false;
 				let exitCode: number | null = null;
+				let promoting = false;
 				const poll: ReturnType<typeof setInterval> = setInterval(check, LOG_POLL_MS);
 				/** Drop the hint now: cancel its timer and clear a shown widget, without letting a stale context's UI getters escape. */
 				const clearHint = () => {
@@ -199,6 +216,9 @@ function operations(ctx: ExtensionContext, run: Run) {
 							// Gone without a marker: whatever it wrote last is still output.
 							const last = pump(true);
 							ended(() => resolve({ exitCode: last?.code ?? null }));
+						} else if (run.matched && !promoting) {
+							promoting = true;
+							promote("waitFor");
 						}
 					} catch (error) {
 						ended(() => reject(error));
@@ -232,7 +252,7 @@ function operations(ctx: ExtensionContext, run: Run) {
 					stop(new Error("aborted"));
 				}
 				/** The one promotion path: register the live process as a task and end `exec` so the delegate returns. */
-				function promote(by: "timer" | "shortcut" = "shortcut") {
+				function promote(by: "timer" | "shortcut" | "waitFor" = "shortcut") {
 					if (done) return;
 					check(); // a command that just ended ends normally
 					if (done || exitCode !== null) return;
@@ -242,6 +262,8 @@ function operations(ctx: ExtensionContext, run: Run) {
 						// The call shows the output up to here; `bash_output` goes on after it.
 						task.readPosition = position;
 						run.elapsedMs = Date.now() - startedAt;
+						// With `waitFor`, an explicit `timeout` becomes the task's deadline, as for `background: true`.
+						if (run.waitFor !== undefined && timeout !== undefined) task.deadline = startedAt + timeout * 1000;
 						run.task = adopt(task);
 						resolve({ exitCode: 0 });
 					});
@@ -277,10 +299,16 @@ function retarget(text: string, piFile: string, task: Task): string {
 }
 
 /** The text a promoted call answers with. */
-function promotedText(task: Task, elapsedMs: number, output: string): string {
+function promotedText(task: Task, run: Run, output: string): string {
+	const seconds = Math.round(run.elapsedMs / 100) / 10;
+	const head = run.matched
+		? `"${run.waitFor}" appeared after ${seconds} s; the command keeps running as background task ${task.id}. `
+		: `Command still running after ${seconds} s; moved to the background as task ${task.id}. `;
 	return (
-		`Command still running after ${Math.round(elapsedMs / 100) / 10} s; moved to the background as task ${task.id}. ` +
-		"Its completion is reported automatically.\n\n" +
+		head +
+		"Its completion is reported automatically." +
+		(run.waitFor !== undefined && !run.matched ? ` "${run.waitFor}" never appeared in the output.` : "") +
+		"\n\n" +
 		`Output so far:\n${output === "(no output)" ? "" : output}`
 	);
 }
@@ -288,19 +316,25 @@ function promotedText(task: Task, elapsedMs: number, output: string): string {
 /** Run a foreground call: Pi's `bash` over the wrapper, promoted to a task when it outlasts the threshold. */
 export async function runForeground(
 	toolCallId: string,
-	params: { command: string; timeout?: number },
+	params: { command: string; timeout?: number; waitFor?: string },
 	signal: AbortSignal | undefined,
 	onUpdate: Parameters<ReturnType<typeof createBashToolDefinition>["execute"]>[3],
 	ctx: ExtensionToolContext,
 ) {
-	const run: Run = { task: undefined, elapsedMs: 0 };
+	const { waitFor, ...piParams } = params;
+	if (waitFor === "") throw new Error("waitFor must not be empty.");
+	const run: Run = { task: undefined, elapsedMs: 0, waitFor, matched: false };
+	const neverAppeared = `"${waitFor}" never appeared in the output.`;
 	const delegate = createBashToolDefinition(ctx.cwd, { operations: operations(ctx, run) });
 	let result: Awaited<ReturnType<typeof delegate.execute>>;
 	try {
-		result = await delegate.execute(toolCallId, params, signal, onUpdate, ctx);
+		result = await delegate.execute(toolCallId, piParams, signal, onUpdate, ctx);
 	} catch (error) {
 		// Pi's bash throws its output with the status (aborted, timed out, no exit code).
-		if (error instanceof Error) error.message = sanitize(error.message);
+		if (error instanceof Error) {
+			error.message = sanitize(error.message);
+			if (waitFor !== undefined && !run.matched) error.message += `\n\n${neverAppeared}`;
+		}
 		throw error;
 	}
 	// Pi's bash hands the agent the output as the command wrote it; strip it as Pi does
@@ -313,7 +347,14 @@ export async function runForeground(
 	const structured = (result as { structuredContent?: { output?: unknown } }).structuredContent;
 	if (typeof structured?.output === "string")
 		result = { ...result, structuredContent: { ...structured, output: sanitize(structured.output) } } as typeof result;
-	if (run.task === undefined) return result;
+	if (run.task === undefined) {
+		if (waitFor === undefined || run.matched) return result;
+		const last = result.content.findLastIndex((part) => part.type === "text");
+		const content = result.content.map((part, i) =>
+			i === last && part.type === "text" ? { ...part, text: `${part.text}\n\n${neverAppeared}` } : part,
+		);
+		return { ...result, content };
+	}
 	let output = result.content[0]?.type === "text" ? result.content[0].text : "";
 	const piFile = result.details?.fullOutputPath;
 	if (piFile !== undefined) {
@@ -321,7 +362,7 @@ export async function runForeground(
 		rmSync(piFile, { force: true }); // frozen at promotion; the task's log is the live copy
 	}
 	return {
-		content: [{ type: "text" as const, text: promotedText(run.task, run.elapsedMs, output) }],
+		content: [{ type: "text" as const, text: promotedText(run.task, run, output) }],
 		details: undefined,
 	};
 }

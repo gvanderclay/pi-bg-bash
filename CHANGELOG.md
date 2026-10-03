@@ -8,6 +8,12 @@ follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `bash` takes `waitFor`, a text to wait for in a foreground command's output.
+  When it appears the call returns the output so far and the command keeps
+  running as a background task (even after `sleep`); an explicit `timeout` then
+  becomes the task's deadline. A call that ends without the text says it never
+  appeared. `test/background.test.ts` now expects `waitFor` among the
+  parameters.
 - `PI_BG_BASH_DEBUG=1` turns on a diagnostic log, `debug.log` in the state
   directory (`$XDG_STATE_HOME/pi-bg/`): one JSON object per line with the
   errors the extension otherwise swallows, and task start and exit, kills,

@@ -46,12 +46,20 @@ export default function (pi: ExtensionAPI): void {
 		description: `${builtin.description} ${BACKGROUND_DESCRIPTION}`,
 		parameters: Type.Object({
 			...builtin.parameters.properties,
+			waitFor: Type.Optional(
+				Type.String({
+					description:
+						'Text to wait for in the output, such as "listening on" for a server. When it appears the call returns the output so far and the command keeps running as a background task. A `timeout` then limits the task, not the call.',
+				}),
+			),
 			background: Type.Optional(
 				Type.Boolean({ description: "Run the command as a detached background task and return its id" }),
 			),
 		}),
 		async execute(toolCallId, params, signal, onUpdate, ctx) {
 			setContext(ctx);
+			if (params.waitFor !== undefined && params.background)
+				throw new Error("waitFor applies to foreground calls: drop `background: true`, or drop `waitFor`.");
 			if (!params.background) return runForeground(toolCallId, params, signal, onUpdate, ctx);
 			const task = await startTask(params.command, ctx, { timeout: params.timeout });
 			return {
