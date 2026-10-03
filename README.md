@@ -127,8 +127,9 @@ The rest of this README describes the behaviour in detail.
   `sendMessage` never stops the poller; a message that failed to send is
   retried on a later tick. A task is registered only after its spawn resolves.
 - **Completion message:** one `pi.sendMessage` custom message per task,
-  `deliverAs: "followUp"`, `triggerTurn: true`, with the id, command, exit
-  state (`exited (code N)`, `killed (timed out)`, `killed (killed by user)`,
+  `deliverAs: "followUp"`, `triggerTurn: true`, with the id, the command (on
+  one line, newlines shown as ` ⏎ `, cut to 200 characters), exit state
+  (`exited (code N)`, `killed (timed out)`, `killed (killed by user)`,
   `killed (log limit passed)`, or `exit unknown`, the same wording as
   `bash_tasks`), runtime and the last 20 lines of output, capped at 4 KiB.
   When the cap cut the output, its label says so and names `bash_output <id>`,
