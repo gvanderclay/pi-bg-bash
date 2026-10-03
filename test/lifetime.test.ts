@@ -13,6 +13,7 @@ import {
 	type FakeProcesses,
 	fakeClock,
 	fakeProcesses,
+	keys,
 	resetRegistry,
 	restoreProcesses,
 	session,
@@ -152,7 +153,7 @@ for (const reason of ["quit", "new", "resume", "fork"] as const) {
 		it("sets notified on every task so an in-flight kill cannot leak its message into the next session", async () => {
 			const s = session();
 			await start(s, "long");
-			s.dialogs.answer = (options) => options[0];
+			s.dialogs.keys = [["x"]]; // the session's end empties the list, so it does not come back
 			const killing = s.command("bg"); // a /bg kill with notify: true, left in flight
 			await clock.advance(100); // into the SIGTERM grace period
 			const fresh = session({ id: s.id });
@@ -246,12 +247,12 @@ describe("a task whose command has exited", () => {
 		assert.doesNotMatch(text(result), /stopped the processes/);
 	});
 
-	it("a /bg pick kills what is left, and tells the user", async () => {
+	it("x in /bg kills what is left, and tells the user", async () => {
 		const s = session();
 		const id = await start(s, "server &");
 		procs.of(id).exit(0, { child: true });
 		await clock.until(() => s.sent.length > 0);
-		s.dialogs.answer = (options) => options[0];
+		s.dialogs.keys = [["x"], [keys.escape]];
 		await clock.settle(s.command("bg"));
 		assert.equal(procs.of(id).signals[0], "SIGTERM");
 		assert.match(s.dialogs.notices.join("\n"), /stopped the processes it left running/);

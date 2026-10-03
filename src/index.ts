@@ -9,6 +9,7 @@
 import { createBashToolDefinition, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
+import { bgCommand } from "./bg.ts";
 import { foregroundRuns, PROMOTE_MS, runForeground } from "./foreground.ts";
 import { GRACE_MS } from "./kill.ts";
 import { cleanupOldLogs } from "./logs.ts";
@@ -124,23 +125,10 @@ export default function (pi: ExtensionAPI): void {
 		},
 	});
 	pi.registerCommand("bg", {
-		description: "List background bash tasks; pick a running one to kill it",
+		description: "List background bash tasks: enter shows a task's output, x kills it",
 		handler: async (_args, ctx) => {
 			setContext(ctx);
-			const tasks = [...getRegistry().tasks.values()];
-			if (tasks.length === 0) return ctx.ui.notify("No background tasks.", "info");
-			const lines = tasks.map(taskLine);
-			if (!ctx.hasUI) return ctx.ui.notify(lines.join("\n"), "info");
-			const choice = await ctx.ui.select("Background tasks (pick a running one to kill it)", lines);
-			const task = choice === undefined ? undefined : tasks[lines.indexOf(choice)];
-			if (task === undefined) return;
-			const outcome = await killTask(task, "killed by user", { notify: true });
-			if (outcome === "cleared") ctx.ui.notify(`Task ${task.id}: stopped the processes it left running.`, "info");
-			if (outcome === "leftover-stuck")
-				ctx.ui.notify(
-					`Task ${task.id}: the processes it left running survived SIGKILL and are still running.`,
-					"warning",
-				);
+			await bgCommand(ctx);
 		},
 	});
 	pi.on("session_start", (_event, ctx) => {

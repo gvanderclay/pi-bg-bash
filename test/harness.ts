@@ -41,6 +41,16 @@ type Tool = {
 type Handler = (event: unknown, ctx: unknown) => unknown;
 type Command = { description?: string; handler: (args: string, ctx: unknown) => Promise<void> | void };
 type Sent = { message: { customType: string; content: string; display?: boolean }; options: unknown };
+type CustomFactory = (
+	tui: unknown,
+	theme: unknown,
+	keybindings: unknown,
+	done: (result: unknown) => void,
+) => { render: (width: number) => string[]; handleInput: (data: string) => void };
+/** A scripted step of a `ui.custom` component: keys are typed; a function runs (advances mock time, writes output) and the component renders again into `dialogs.frames`. */
+type Step = string | (() => void);
+/** Terminal input for the scripted keys of `ui.custom` components. */
+export const keys = { up: "\x1b[A", down: "\x1b[B", enter: "\r", escape: "\x1b", home: "\x1b[H" };
 
 let counter = 0;
 
@@ -55,11 +65,24 @@ export function session(options: { id?: string; hasUI?: boolean } = {}) {
 	const statuses: { key: string; text: string | undefined }[] = [];
 	const widgets: { key: string; content: string[] | undefined; placement: string | undefined }[] = [];
 	const shortcuts: Record<string, { description?: string; handler: (ctx: unknown) => unknown }> = {};
-	/** What the user sees: `ui.select` prompts and `ui.notify` texts, and the script that answers `select`. */
+	/**
+	 * What the user sees and does: `ui.select` prompts and the script that answers
+	 * them, `ui.confirm` titles and the answer, `ui.notify` texts, and for each
+	 * `ui.custom` component its first render (80 columns, 24 rows, theme colors
+	 * dropped) and the keys typed into it, one list per component, in order.
+	 */
 	const dialogs = {
 		selects: [] as { title: string; options: string[] }[],
 		notices: [] as string[],
 		answer: (_options: string[]) => undefined as string | undefined,
+		confirms: [] as string[],
+		confirmMessages: [] as string[],
+		confirm: true,
+		screens: [] as string[][],
+		keys: [] as Step[][],
+		frames: [] as string[][],
+		/** Count of `tui.requestRender()` calls, to show a closed component stopped refreshing. */
+		renderRequests: 0,
 	};
 	/** Switches for a stale context: `sendMessage`, `setStatus` or the UI getters throwing. */
 	const faults = { failSend: false, failFooter: false, staleUI: false, sendAttempts: 0 };
@@ -88,6 +111,36 @@ export function session(options: { id?: string; hasUI?: boolean } = {}) {
 		notify: (message: string) => {
 			dialogs.notices.push(message);
 		},
+		confirm: async (title: string, message?: string) => {
+			dialogs.confirms.push(title);
+			dialogs.confirmMessages.push(message ?? "");
+			return dialogs.confirm;
+		},
+		custom: (factory: CustomFactory) =>
+			new Promise((resolve, reject) => {
+				let open = true;
+				const tui = {
+					terminal: { rows: 24, columns: 80 },
+					requestRender: () => {
+						dialogs.renderRequests++;
+					},
+				};
+				const theme = { fg: (_color: string, text: string) => text, bold: (text: string) => text };
+				const component = factory(tui, theme, undefined, (result) => {
+					open = false;
+					resolve(result);
+				});
+				dialogs.screens.push(component.render(80));
+				for (const step of dialogs.keys.shift() ?? []) {
+					if (!open) break;
+					if (typeof step === "string") component.handleInput(step);
+					else {
+						step();
+						dialogs.frames.push(component.render(80));
+					}
+				}
+				if (open) reject(new Error("a custom component was left open: script its keys in dialogs.keys"));
+			}),
 		setStatus: (key: string, text: string | undefined) => {
 			if (faults.failFooter) throw new Error("This extension ctx is stale");
 			statuses.push({ key, text });
@@ -98,6 +151,7 @@ export function session(options: { id?: string; hasUI?: boolean } = {}) {
 	};
 	const ctx = {
 		cwd: root,
+		mode: "tui" as "tui" | "rpc",
 		get hasUI() {
 			if (faults.staleUI) throw new Error("This extension ctx is stale");
 			return uiEnabled;

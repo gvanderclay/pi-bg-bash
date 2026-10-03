@@ -6,6 +6,18 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- `/bg` in the terminal UI is a task list where enter shows the selected task's
+  output (scrollable, following new output while at the bottom, without moving
+  `bash_output`'s read position) and `x` kills the task after a confirmation
+  that shows the command on one line; esc closes it. The list and the output
+  refresh every second. A kill no longer happens
+  on a plain pick, in RPC mode too: it asks first. The `/bg` tests in
+  `test/kill.test.ts` and `test/lifetime.test.ts` are updated for the new keys
+  and the confirmation.
+- `@earendil-works/pi-tui` is a new peer dependency, provided by Pi.
+
 ## [0.1.2] - 2026-10-02
 
 ### Changed

@@ -27,8 +27,8 @@ function fromCharacterBoundary(buffer: Buffer): Buffer {
 	return buffer.subarray(start);
 }
 
-/** The last lines of the log, marker removed, stripped for the agent (the log stays raw), capped in lines and bytes, and whether the cap cut anything. Never moves the read position. */
-export function logTail(task: Task): { text: string; cut: boolean } {
+/** The last lines of the log, marker removed, stripped for the agent (the log stays raw), capped in lines and bytes, and whether the cap cut anything. Never moves the read position. `maxBytes` must stay below the 64 KiB read window. */
+export function logTail(task: Task, maxLines = TAIL_LINES, maxBytes = TAIL_BYTES): { text: string; cut: boolean } {
 	let buffer: Buffer;
 	let size: number;
 	try {
@@ -43,11 +43,11 @@ export function logTail(task: Task): { text: string; cut: boolean } {
 		return { text: "(log unavailable)", cut: false };
 	}
 	const lines = sanitize(fromCharacterBoundary(buffer).toString("utf8")).replace(/\n$/, "").split("\n");
-	const tail = lines.slice(-TAIL_LINES).join("\n");
+	const tail = lines.slice(-maxLines).join("\n");
 	const bytes = Buffer.from(tail, "utf8");
-	const cut = size > READ_WINDOW || lines.length > TAIL_LINES || bytes.length > TAIL_BYTES;
-	if (bytes.length <= TAIL_BYTES) return { text: tail, cut };
-	return { text: fromCharacterBoundary(bytes.subarray(bytes.length - TAIL_BYTES)).toString("utf8"), cut };
+	const cut = size > READ_WINDOW || lines.length > maxLines || bytes.length > maxBytes;
+	if (bytes.length <= maxBytes) return { text: tail, cut };
+	return { text: fromCharacterBoundary(bytes.subarray(bytes.length - maxBytes)).toString("utf8"), cut };
 }
 
 /**
@@ -69,8 +69,13 @@ export function runtimeText(task: Task): string {
 
 /** One line per task for `bash_tasks` and `/bg`: `id | state | runtime | command`, the command on one line. */
 export function taskLine(task: Task): string {
-	const command = task.command.replace(/\s*\n\s*/g, " ⏎ ");
-	return `${task.id} | ${stateText(task)} | ${runtimeText(task)} | ${command.length > 200 ? `${command.slice(0, 200)}…` : command}`;
+	return `${task.id} | ${stateText(task)} | ${runtimeText(task)} | ${oneLine(task.command)}`;
+}
+
+/** A command on one line (newlines shown as ⏎), cut to 200 characters. */
+export function oneLine(command: string): string {
+	const line = command.replace(/\s*\n\s*/g, " ⏎ ");
+	return line.length > 200 ? `${line.slice(0, 200)}…` : line;
 }
 
 /** The completion text: id, command, state, runtime and the output's last lines. */

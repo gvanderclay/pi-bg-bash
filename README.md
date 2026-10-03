@@ -43,7 +43,8 @@ server in the background and tell me when it is up". It calls `bash` with
 agent receives one message with the exit state and the last lines of output,
 which starts a turn if it was idle.
 
-Run `/bg` to see every task, and pick a running one to kill it. Press
+Run `/bg` to see every task: enter shows a task's output, and `x` kills it
+after you confirm. Press
 `ctrl+shift+b` while a foreground command runs to move it to the background
 at once instead of waiting.
 
@@ -59,7 +60,8 @@ at once instead of waiting.
   last read stopped, or only the newest output, optionally filtered by a regex.
 - `bash_tasks()` lists every task of the session with its state and runtime.
 - `bash_kill({ id })` stops a task and everything it started.
-- `/bg` lists the tasks and kills the one you pick.
+- `/bg` lists the tasks; enter shows the selected task's output and `x` kills
+  it after a confirmation.
 - `ctrl+shift+b` moves the running foreground command to the background. It
   needs a terminal that reports modified keys (the kitty keyboard protocol or
   `modifyOtherKeys`); inside tmux, also `set -g extended-keys on`.
@@ -263,11 +265,22 @@ running or finished.
   (seconds) records `startedAt + timeout` as the task's deadline. The poller,
   on the first tick after it, runs the group kill and sends the completion
   message saying `timed out`. Without a `timeout` a background task has none.
-- `/bg`: with a UI, `ctx.ui.select` over every task (same line as
-  `bash_tasks`); picking a running task kills it and sends the completion
-  message saying `killed by user`; picking a finished one stops what it left
-  running, if anything, and tells you. Without
-  a UI it prints the list with `ctx.ui.notify` and kills nothing.
+- `/bg`: in the terminal UI, a list of every task (same line as `bash_tasks`).
+  Enter shows the end of the selected task's log, stripped like `bash_output`
+  and capped like it (2000 lines or 50 KiB), opened at the bottom and scrolled
+  with the arrows, page up/down, home and end; it re-reads the log every second
+  and follows new output while it is at the bottom (scrolled up, it keeps its
+  place), and never moves `bash_output`'s read position. The list refreshes
+  every second too, keeping the selected task. `x` asks `Kill <id>?` (for a
+  finished task, `Stop what <id> left running?`), showing the command on one
+  line (newlines as `⏎`, cut to 200 characters), and on yes runs the group kill:
+  a running task gets the completion message saying `killed by user`, a finished
+  one has what it left running stopped, and you are told what happened. Esc in
+  the output goes back to the list, which comes back after a kill too, with the
+  tasks' current state; esc in the list closes it. In RPC mode, which has no
+  custom components, `ctx.ui.select` over the tasks, and a pick asks the same
+  confirmation before the kill. Without a UI it prints the list with
+  `ctx.ui.notify` and kills nothing.
 
 ## Session lifetime
 
@@ -295,7 +308,7 @@ Tasks belong to the session that started them.
   by session end and `bash_kill`/`/bg`. No Pi is left to read the GONE marker, so
   `bash_output` does not know it. A watcher that fails to start leaves the task
   running without a crash watch (fail open).
-- **`bash_kill` and a `/bg` pick on a task whose command has exited** run the
+- **`bash_kill` and a `/bg` kill on a task whose command has exited** run the
   group kill when anything is left in its group and say so (`had already
   finished: exited (code 0); stopped the processes it left running`, or that
   they survived SIGKILL). An empty group gives "already finished" as before.

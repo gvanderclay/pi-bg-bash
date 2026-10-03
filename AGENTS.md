@@ -10,7 +10,7 @@ and the `ctrl+shift+b` shortcut.
 - The extension is the `.ts` files in `src/`. `src/index.ts` is the entry Pi
   loads and registers the tools; `registry.ts` holds the tasks and the poller,
   `launch.ts` the wrapper and the crash watcher, `foreground.ts` foreground
-  calls and promotion, `kill.ts` the group kill, `port.ts` the only contact
+  calls and promotion, `bg.ts` the `/bg` command, `kill.ts` the group kill, `port.ts` the only contact
   with real processes, `logs.ts` and `logview.ts` the logs, `output.ts`
   `bash_output`, `notify.ts` the completion message, and `sanitize.ts` the
   output stripping.
