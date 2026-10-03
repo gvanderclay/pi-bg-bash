@@ -582,3 +582,95 @@ describe("the bash description", () => {
 		assert.match(tool.description, /still running after 120 s.*moves to the background/);
 	});
 });
+
+describe("a foreground bash call with waitFor", () => {
+	const MATCHED = /^"listening on" appeared after [\d.]+ s; the command keeps running as background task bg-1\. /;
+
+	it("returns the output so far and promotes when the text arrives in one chunk", async () => {
+		const s = session();
+		const call = s.toolCall("bash", { command: "serve", waitFor: "listening on" });
+		const proc = await launched();
+		proc.write("starting\nlistening on :80\n");
+		const result = text(await clock.settle(call, 5000));
+		assert.match(result, MATCHED);
+		assert.match(result, /Output so far:\nstarting\nlistening on :80\n$/);
+		assert.equal(proc.pidAlive(), true);
+		assert.match(text(await s.toolCall("bash_tasks", {})), /^bg-1 \| running/);
+	});
+
+	it("matches text split across two chunks", async () => {
+		const s = session();
+		const call = s.toolCall("bash", { command: "serve", waitFor: "listening on" });
+		const proc = await launched();
+		proc.write("listen");
+		await clock.advance(200);
+		assert.equal(getRegistry().tasks.size, 0);
+		proc.write("ing on :80");
+		assert.match(text(await clock.settle(call, 5000)), MATCHED);
+	});
+
+	it("matches inside an unterminated last line", async () => {
+		const s = session();
+		const call = s.toolCall("bash", { command: "serve", waitFor: "Password:" });
+		const proc = await launched();
+		proc.write("Password:");
+		assert.match(text(await clock.settle(call, 5000)), /^"Password:" appeared/);
+	});
+
+	it("matches after escape codes and control characters are stripped", async () => {
+		const s = session();
+		const call = s.toolCall("bash", { command: "serve", waitFor: "listening on" });
+		const proc = await launched();
+		proc.write("\x1b[32mlisten\x1b[0m\x07ing\r on :80\n");
+		assert.match(text(await clock.settle(call, 5000)), MATCHED);
+	});
+
+	it("makes an explicit timeout the task's deadline; the poller kills it as timed out", async () => {
+		const s = session();
+		const call = s.toolCall("bash", { command: "serve", waitFor: "up", timeout: 5 });
+		const proc = await launched();
+		await clock.advance(1000);
+		proc.write("up\n");
+		assert.match(text(await clock.settle(call, 5000)), /^"up" appeared/);
+		assert.equal(proc.pidAlive(), true);
+		await clock.until(() => s.sent.length > 0, 10_000);
+		assert.deepEqual(proc.signals, ["SIGTERM"]);
+		assert.match(s.sent[0].message.content, /finished: killed \(timed out\)/);
+		assert.match(text(await s.toolCall("bash_tasks", {})), /killed \(timed out\)/);
+	});
+
+	it("promotes a sleep-prefixed command on a match", async () => {
+		const s = session();
+		const call = s.toolCall("bash", { command: "sleep 500; echo up", waitFor: "up" });
+		const proc = await launched();
+		proc.write("up\n");
+		assert.match(text(await clock.settle(call, 5000)), /^"up" appeared/);
+	});
+
+	it("says the text never appeared when the command exits first", async () => {
+		const s = session();
+		const call = s.toolCall("bash", { command: "serve", waitFor: "listening on" });
+		const proc = await launched();
+		proc.write("done\n");
+		proc.exit(0);
+		assert.equal(text(await clock.settle(call)), 'done\n\n\n"listening on" never appeared in the output.');
+	});
+
+	it("says the text never appeared when the 120 s promotion fires first", async () => {
+		const s = session();
+		const call = s.toolCall("bash", { command: "serve", waitFor: "listening on" });
+		const proc = await launched();
+		proc.write("starting\n");
+		assert.match(
+			text(await clock.settle(call)),
+			/^Command still running after 120 s; moved to the background as task bg-1\. Its completion is reported automatically\. "listening on" never appeared in the output\.\n\nOutput so far:\nstarting\n$/,
+		);
+	});
+
+	it("rejects waitFor with background: true and an empty waitFor, launching nothing", async () => {
+		const s = session();
+		await assert.rejects(s.toolCall("bash", { command: "serve", waitFor: "x", background: true }), /waitFor applies/);
+		await assert.rejects(s.toolCall("bash", { command: "serve", waitFor: "" }), /waitFor must not be empty/);
+		assert.equal(procs.all.length, 0);
+	});
+});

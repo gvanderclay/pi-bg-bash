@@ -148,6 +148,6 @@ describe("the bash tool's schema", () => {
 		);
 		assert.doesNotMatch(tool.description.slice(builtin.description.length), /until [^;]*; do sleep/);
 		const properties = Object.keys((tool.parameters as { properties: object }).properties);
-		assert.deepEqual(properties.sort(), ["background", "command", "timeout"]);
+		assert.deepEqual(properties.sort(), ["background", "command", "timeout", "waitFor"]);
 	});
 });
