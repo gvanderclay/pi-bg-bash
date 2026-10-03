@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { chmodSync } from "node:fs";
 import { join } from "node:path";
-import { after, afterEach, beforeEach, describe, it } from "node:test";
+import { after, afterEach, beforeEach, describe, it, mock } from "node:test";
 
 import { getRegistry } from "../src/registry.ts";
 import {
@@ -11,6 +11,7 @@ import {
 	type FakeProcesses,
 	fakeClock,
 	fakeProcesses,
+	keys,
 	resetRegistry,
 	restoreProcesses,
 	session,
@@ -293,18 +294,21 @@ describe("/bg", () => {
 		assert.equal(session().hasCommand("bg"), true);
 	});
 
-	it("offers every task, and kills a picked running task with one 'killed by user' message", async () => {
+	it("lists every task; x asks, then kills the task with one 'killed by user' message and lists again", async () => {
 		const s = session();
 		const done = await start(s, "echo hi");
 		procs.of(done).exit(0);
 		await clock.until(() => s.sent.length > 0);
 		const running = await start(s, "sleep 30");
 		const proc = procs.of(running);
-		s.dialogs.answer = (options) => options.find((option) => option.includes(running));
+		s.dialogs.keys = [[keys.down, "x"], [keys.escape]];
 		await clock.settle(s.command("bg"));
-		const [{ options }] = s.dialogs.selects;
-		assert.deepEqual(options, [`${done} | exited (code 0) | 2.0s | echo hi`, `${running} | running | 0.0s | sleep 30`]);
+		const [first, second] = s.dialogs.screens;
+		assert.match(first.join("\n"), new RegExp(`${done} \\| exited \\(code 0\\) \\| 2\\.0s \\| echo hi`));
+		assert.match(first.join("\n"), new RegExp(`${running} \\| running \\| 0\\.0s \\| sleep 30`));
+		assert.deepEqual(s.dialogs.confirms, [`Kill ${running}?`]);
 		assert.equal(proc.groupAlive(), false);
+		assert.match(second.join("\n"), new RegExp(`${running} \\| killed \\(killed by user\\)`));
 		await clock.tick(3);
 		assert.equal(s.sent.length, 2);
 		assert.match(
@@ -318,7 +322,7 @@ describe("/bg", () => {
 		const s = session();
 		const id = await start(s, "trap '' TERM; while :; do sleep 1; done");
 		procs.of(id).ignoresTerm = true;
-		s.dialogs.answer = (options) => options.find((option) => option.includes(id));
+		s.dialogs.keys = [["x"], [keys.escape]];
 		const command = s.command("bg");
 		await clock.advance(2500); // a poll runs during the kill and must skip the task
 		assert.equal(s.sent.length, 0);
@@ -328,20 +332,102 @@ describe("/bg", () => {
 		assert.doesNotMatch(s.sent[0].message.content, /exit unknown/);
 	});
 
-	it("does nothing when a finished task is picked or the list is dismissed", async () => {
+	it("kills nothing when the confirmation is declined or the list is closed", async () => {
 		const s = session();
-		const done = await start(s, "echo hi");
-		const running = await start(s, "sleep 30");
-		procs.of(done).exit(0);
-		await clock.until(() => s.sent.length > 0);
-		s.dialogs.answer = (options) => options.find((option) => option.includes(done));
-		await s.command("bg");
-		s.dialogs.answer = () => undefined;
+		const id = await start(s, "sleep 30");
+		s.dialogs.confirm = false;
+		s.dialogs.keys = [["x"], [keys.escape]];
 		await s.command("bg");
 		await clock.tick(3);
-		assert.equal(s.dialogs.selects.length, 2);
-		assert.equal(s.sent.length, 1);
-		assert.deepEqual(procs.of(running).signals, []);
+		assert.deepEqual(s.dialogs.confirms, [`Kill ${id}?`]);
+		assert.equal(s.dialogs.screens.length, 2);
+		assert.equal(s.sent.length, 0);
+		assert.deepEqual(procs.of(id).signals, []);
+	});
+
+	it("enter shows the end of a task's output without moving bash_output's position; esc goes back", async () => {
+		const s = session();
+		const id = await start(s, "build");
+		procs.of(id).write(`${Array.from({ length: 40 }, (_, i) => `line ${i + 1}`).join("\n")}\n`);
+		s.dialogs.keys = [[keys.enter], [keys.home, keys.escape], [keys.escape]];
+		await s.command("bg");
+		const [, output, list] = s.dialogs.screens;
+		assert.match(output[1], new RegExp(`^${id} \\| running`));
+		assert.deepEqual(
+			output.slice(2, -2),
+			Array.from({ length: 18 }, (_, i) => `line ${i + 23}`),
+		);
+		assert.match(output.at(-2) ?? "", /^lines 23–40 of 40/);
+		assert.match(list.join("\n"), new RegExp(`${id} \\| running`));
+		assert.deepEqual(procs.of(id).signals, []);
+		assert.match(text(await s.toolCall("bash_output", { id })), /^Task bg-\d+: running\.\nline 1\n/);
+	});
+
+	it("the kill confirmation shows the command on one line", async () => {
+		const s = session();
+		await start(s, "echo one\n  echo two");
+		s.dialogs.confirm = false;
+		s.dialogs.keys = [["x"], [keys.escape]];
+		await s.command("bg");
+		assert.deepEqual(s.dialogs.confirmMessages, ["echo one ⏎ echo two"]);
+	});
+
+	it("the list refreshes each second with new and changed tasks and keeps the selection", async () => {
+		const s = session();
+		await start(s, "sleep 30");
+		const second = await start(s, "sleep 40");
+		s.dialogs.confirm = false;
+		s.dialogs.keys = [
+			[
+				keys.down,
+				() => {
+					const task = getRegistry().tasks.get(second);
+					if (task) getRegistry().tasks.set("bg-99", { ...task, id: "bg-99", command: "late" });
+					mock.timers.tick(1000);
+				},
+				"x",
+			],
+			[keys.escape],
+		];
+		await clock.settle(s.command("bg"));
+		const frame = s.dialogs.frames[0].join("\n");
+		assert.match(frame, /bg-99 \| running \| .* \| late/);
+		assert.match(frame, new RegExp(`${second} \\| running \\| 1\\.\\ds`));
+		assert.deepEqual(s.dialogs.confirms, [`Kill ${second}?`]);
+	});
+
+	it("the output view follows new output at the bottom, keeps its place when scrolled up, and stops refreshing on close", async () => {
+		const s = session();
+		const id = await start(s, "build");
+		const proc = procs.of(id);
+		const lines = (from: number, to: number) => Array.from({ length: to - from + 1 }, (_, i) => `line ${from + i}`);
+		proc.write(`${lines(1, 40).join("\n")}\n`);
+		const append = (n: number) => () => {
+			proc.write(`line ${n}\n`);
+			mock.timers.tick(1000);
+		};
+		s.dialogs.keys = [[keys.enter], [append(41), keys.up, append(42), keys.escape], [keys.escape]];
+		await clock.settle(s.command("bg"));
+		const [atBottom, scrolled] = s.dialogs.frames;
+		assert.deepEqual(atBottom.slice(2, -2), lines(24, 41));
+		assert.match(atBottom.at(-2) ?? "", /^lines 24–41 of 41/);
+		assert.deepEqual(scrolled.slice(2, -2), lines(23, 40));
+		assert.match(scrolled.at(-2) ?? "", /^lines 23–40 of 42/);
+		const requests = s.dialogs.renderRequests;
+		await clock.advance(5000);
+		assert.equal(s.dialogs.renderRequests, requests);
+	});
+
+	it("in RPC mode kills a picked task after a confirmation", async () => {
+		const s = session();
+		const id = await start(s, "sleep 30");
+		s.ctx.mode = "rpc";
+		s.dialogs.answer = (options) => options[0];
+		await clock.settle(s.command("bg"));
+		assert.deepEqual(s.dialogs.selects[0].options, [`${id} | running | 0.0s | sleep 30`]);
+		assert.deepEqual(s.dialogs.confirms, [`Kill ${id}?`]);
+		assert.equal(procs.of(id).groupAlive(), false);
+		assert.equal(s.dialogs.screens.length, 0);
 	});
 
 	it("without a UI prints the list through notify and kills nothing", async () => {
