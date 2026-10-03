@@ -18,6 +18,7 @@ import { join } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { createGzip } from "node:zlib";
 
+import { debugError } from "./debug.ts";
 import { OWNER_FILE, ownerPid, stateRoot } from "./launch.ts";
 import { processPort } from "./port.ts";
 import type { Task } from "./registry.ts";
@@ -41,7 +42,9 @@ export function logLimitBytes(): number {
 export function overLogLimit(task: Task): boolean {
 	try {
 		return statSync(task.logPath).size > logLimitBytes();
-	} catch {
+	} catch (error) {
+		// Checked four times a second: a missing log is settled by the poller, not worth a line each time.
+		if ((error as NodeJS.ErrnoException).code !== "ENOENT") debugError("log-limit-stat", error, { log: task.logPath });
 		return false; // a log that cannot be read cannot be over the limit
 	}
 }
@@ -74,7 +77,8 @@ export async function gzipLog(task: Task): Promise<void> {
 	} catch (error) {
 		try {
 			rmSync(gz, { force: true, recursive: true });
-		} catch {
+		} catch (rmError) {
+			debugError("gzip-partial-rm", rmError, { log: gz });
 			// removing a partial `.gz` must never replace the gzip error
 		}
 		if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
@@ -88,7 +92,8 @@ export async function gzipLog(task: Task): Promise<void> {
 function mtimeMs(path: string): number | undefined {
 	try {
 		return lstatSync(path).mtimeMs;
-	} catch {
+	} catch (error) {
+		debugError("mtime", error, { path });
 		return undefined;
 	}
 }
@@ -126,7 +131,8 @@ export function cleanupOldLogs(tasks: Iterable<Task>): void {
 		if (owner !== undefined) {
 			try {
 				ownerAlive = processPort().pidAlive(owner);
-			} catch {
+			} catch (error) {
+				debugError("owner-alive", error, { dir });
 				ownerAlive = false;
 			}
 		}
@@ -136,7 +142,8 @@ export function cleanupOldLogs(tasks: Iterable<Task>): void {
 		let entries;
 		try {
 			entries = readdirSync(dir, { withFileTypes: true });
-		} catch {
+		} catch (error) {
+			debugError("cleanup-readdir", error, { dir });
 			continue; // unreadable: leave it
 		}
 		for (const entry of entries) {
@@ -147,7 +154,8 @@ export function cleanupOldLogs(tasks: Iterable<Task>): void {
 			if (mt !== undefined && mt < cutoff) {
 				try {
 					unlinkSync(path);
-				} catch {
+				} catch (error) {
+					debugError("cleanup-unlink", error, { path });
 					// housekeeping is best-effort: one unreadable file never fails session start
 				}
 			}
@@ -155,7 +163,9 @@ export function cleanupOldLogs(tasks: Iterable<Task>): void {
 		// No live owner (the marker missing, malformed, or naming a dead pid): drop it so the directory can empty and be removed.
 		try {
 			unlinkSync(join(dir, OWNER_FILE));
-		} catch {
+		} catch (error) {
+			// A directory without a marker is the ordinary case, not worth a line.
+			if ((error as NodeJS.ErrnoException).code !== "ENOENT") debugError("cleanup-owner-unlink", error, { dir });
 			// already gone, or not removable: leave it
 		}
 		if (dirMt !== undefined && dirMt < cutoff) {

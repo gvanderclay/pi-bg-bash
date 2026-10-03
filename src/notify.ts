@@ -1,6 +1,7 @@
 // The completion message: what the agent hears when a task ends.
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
+import { debugError } from "./debug.ts";
 import { openView } from "./logview.ts";
 import type { Task } from "./registry.ts";
 import { sanitize } from "./sanitize.ts";
@@ -39,7 +40,8 @@ export function logTail(task: Task, maxLines = TAIL_LINES, maxBytes = TAIL_BYTES
 		} finally {
 			view.close();
 		}
-	} catch {
+	} catch (error) {
+		debugError("log-tail", error, { task: task.id, log: task.logPath });
 		return { text: "(log unavailable)", cut: false };
 	}
 	const lines = sanitize(fromCharacterBoundary(buffer).toString("utf8")).replace(/\n$/, "").split("\n");

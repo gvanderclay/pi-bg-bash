@@ -203,6 +203,31 @@ output kept.
   `promote()` on each entry of `foregroundRuns()` (`foreground.ts`), the set of
   foreground calls in flight; the 120 s timer and the shortcut both call it.
 
+## Debug log
+
+Set `PI_BG_BASH_DEBUG=1` (the value `1` exactly, read on every write) to append
+diagnostics to `$XDG_STATE_HOME/pi-bg/debug.log` (default
+`~/.local/state/pi-bg/debug.log`, mode `0o600`). Without it nothing is written
+and nothing else changes. A failed write to the log is dropped, never raised.
+
+- **Format:** JSON Lines. Every line has `t` (ISO timestamp) and `event`;
+  task lines add `task`, `session`, `pid` and `command` (on one line, as in
+  `bash_tasks`).
+- **Events:** `task-start`, `task-exit` (`state`, `exitCode`), `kill-request`
+  and `kill` (`reason`, `outcome`; a log-limit kill has that `reason`),
+  `deadline`, `promote` (`by: "timer"` or `"shortcut"`, `elapsedMs`),
+  `session-end` (the task count and the groups it kills, with an `error` line
+  for each kill that fails) and `rotate`.
+- **Errors:** every error the extension swallows or downgrades is an `error`
+  line with `where` (a short tag), `error` (the message), `code` and `stack`.
+  Two expected cases are not logged: ESRCH/EPERM from signalling a group that
+  is gone, and a missing file where absence is ordinary (the owner marker, the
+  log-size check of a deleted log).
+- **Rotation:** at `session_start`, a `debug.log` over 5 MiB is renamed aside
+  (so only one Pi process rotates it), gzipped to `debug.log.1.gz`, and the
+  older generations shift up; five are kept, `debug.log.5.gz` the oldest. The
+  7-day cleanup never touches these files.
+
 ## `bash_output`
 
 `bash_output({ id, latest?, filter? })` reads a task's log — plain or gzipped,

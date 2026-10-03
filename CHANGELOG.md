@@ -6,6 +6,14 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- `PI_BG_BASH_DEBUG=1` turns on a diagnostic log, `debug.log` in the state
+  directory (`$XDG_STATE_HOME/pi-bg/`): one JSON object per line with the
+  errors the extension otherwise swallows, and task start and exit, kills,
+  promotions and deadlines. At session start it is rotated above 5 MiB into
+  five gzipped generations. Without the variable nothing is written.
+
 ### Changed
 
 - `/bg` in the terminal UI is a task list where enter shows the selected task's

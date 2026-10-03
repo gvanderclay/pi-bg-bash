@@ -23,6 +23,8 @@ import { delimiter, join } from "node:path";
 
 import * as pi from "@earendil-works/pi-coding-agent";
 
+import { debugError } from "./debug.ts";
+
 /**
  * The wrapper. `$1` is the command, `$2` the task's nonce, `$3` Pi's pid (unused
  * here; the watcher reads it), the rest the shell and its arguments. It runs the
@@ -68,10 +70,12 @@ export function sessionLogDir(sessionId: string): string {
 	try {
 		writeFileSync(tmp, String(process.pid), { mode: 0o600 });
 		renameSync(tmp, join(dir, OWNER_FILE));
-	} catch {
+	} catch (error) {
+		debugError("owner-marker", error, { dir });
 		try {
 			rmSync(tmp, { force: true });
-		} catch {
+		} catch (rmError) {
+			debugError("owner-marker-rm", rmError, { dir });
 			// nothing more to do
 		}
 		// the directory stays usable without an owner marker
@@ -85,7 +89,9 @@ export function ownerPid(dir: string): number | undefined {
 		const pid = Number(readFileSync(join(dir, OWNER_FILE), "utf8").trim());
 		// Bounded like `process.kill`: a larger value throws rather than answering liveness.
 		return Number.isInteger(pid) && pid > 1 && pid <= 0x7fffffff ? pid : undefined;
-	} catch {
+	} catch (error) {
+		// A directory without a marker is the ordinary case, not worth a line.
+		if ((error as NodeJS.ErrnoException).code !== "ENOENT") debugError("owner-pid", error, { dir });
 		return undefined;
 	}
 }
@@ -105,13 +111,15 @@ export function resolveShell(): Shell {
 	try {
 		const config = api.getShellConfig?.() as { shell: string; args: string[] } | undefined;
 		if (config !== undefined) ({ shell, args } = config);
-	} catch {
+	} catch (error) {
+		debugError("shell-config", error);
 		// keep sh -c
 	}
 	let env: NodeJS.ProcessEnv | undefined;
 	try {
 		env = api.getShellEnv?.() as NodeJS.ProcessEnv | undefined;
-	} catch {
+	} catch (error) {
+		debugError("shell-env", error);
 		// use the fallback
 	}
 	if (env === undefined) {
@@ -122,7 +130,8 @@ export function resolveShell(): Shell {
 			const current = env[key] ?? "";
 			// As Pi's `getShellEnv`: the PATH is kept as written, empty entries included.
 			if (!current.split(delimiter).includes(bin)) env[key] = [bin, current].filter(Boolean).join(delimiter);
-		} catch {
+		} catch (error) {
+			debugError("agent-dir", error);
 			// no agent dir: leave PATH alone
 		}
 	}
@@ -155,7 +164,8 @@ export async function launch(options: LaunchOptions): Promise<number> {
 	const { command, cwd, logPath, nonce } = options;
 	try {
 		accessSync(cwd, constants.F_OK);
-	} catch {
+	} catch (error) {
+		debugError("launch-cwd", error, { cwd });
 		throw new Error(`Working directory does not exist: ${cwd}\nCannot execute bash commands.`);
 	}
 	const { shell, args, env: base } = options.shell ?? resolveShell();
@@ -179,7 +189,7 @@ export async function launch(options: LaunchOptions): Promise<number> {
 			child.once("spawn", resolve);
 			child.once("error", reject);
 		});
-		child.on("error", () => {}); // a later error must not become an uncaught exception
+		child.on("error", (error) => debugError("child-error", error, { pid: child.pid })); // a later error must not become an uncaught exception
 		child.unref();
 		if (child.pid === undefined) throw new Error(`could not start the shell for ${JSON.stringify(command)}`);
 		// The watcher outlives the command while its group has members, and kills them
@@ -191,9 +201,10 @@ export async function launch(options: LaunchOptions): Promise<number> {
 				["-c", WATCH, "pi-bg-watch", String(options.piPid ?? process.pid), String(child.pid), nonce],
 				{ detached: true, stdio: ["ignore", fd, fd] },
 			);
-			watcher.on("error", () => {}); // the async "error" event is the same fail-open path
+			watcher.on("error", (error) => debugError("watcher-error", error, { pid: child.pid })); // the async "error" event is the same fail-open path
 			watcher.unref();
-		} catch {
+		} catch (error) {
+			debugError("watcher-spawn", error, { pid: child.pid });
 			// spawn threw synchronously: the task still runs, unprotected.
 		}
 		return child.pid;
