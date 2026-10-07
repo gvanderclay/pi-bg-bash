@@ -6,6 +6,11 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- `/bg` lists running tasks first, then the most recently started. The `/bg`
+  listing test in `test/kill.test.ts` now expects that order.
+
 ## [0.2.0] - 2026-10-03
 
 ### Added
