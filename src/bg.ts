@@ -1,5 +1,5 @@
 // The `/bg` command. In the terminal UI it lists the tasks: enter shows a task's
-// output, x kills the task after a confirmation, esc closes the list. In RPC mode,
+// output, x kills the task after a confirmation, q or esc closes the list. In RPC mode,
 // which has no custom components, a picked task is killed after a confirmation.
 // Without a UI it prints the list.
 import {
@@ -103,7 +103,7 @@ function taskList(
 		container.addChild(new DynamicBorder(accent));
 		container.addChild(new Text(accent(theme.bold("Background tasks"))));
 		container.addChild(list);
-		container.addChild(new Text(theme.fg("dim", "↑↓ select • enter view output • x kill • esc close")));
+		container.addChild(new Text(theme.fg("dim", "↑↓ select • enter view output • x kill • q/esc close")));
 		container.addChild(new DynamicBorder(accent));
 	};
 	const current = (): Task | undefined => tasks.find((task) => task.id === list.getSelectedItem()?.value);
@@ -122,6 +122,7 @@ function taskList(
 		handleInput(data: string): void {
 			const task = current();
 			if (matchesKey(data, "x") && task !== undefined) finish({ task, action: "kill" });
+			else if (matchesKey(data, "q")) finish(undefined);
 			else list.handleInput(data);
 			tui.requestRender();
 		},

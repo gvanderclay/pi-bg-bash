@@ -10,6 +10,7 @@ follows [Semantic Versioning](https://semver.org/).
 
 - `/bg` lists running tasks first, then the most recently started. The `/bg`
   listing test in `test/kill.test.ts` now expects that order.
+- `q` closes the `/bg` task list, as esc does.
 
 ## [0.2.0] - 2026-10-03
 
