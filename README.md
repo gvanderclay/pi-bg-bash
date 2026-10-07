@@ -308,7 +308,8 @@ running or finished.
   (seconds) records `startedAt + timeout` as the task's deadline. The poller,
   on the first tick after it, runs the group kill and sends the completion
   message saying `timed out`. Without a `timeout` a background task has none.
-- `/bg`: in the terminal UI, a list of every task (same line as `bash_tasks`).
+- `/bg`: in the terminal UI, a list of every task (same line as `bash_tasks`),
+  running tasks first, then the most recently started.
   Enter shows the end of the selected task's log, stripped like `bash_output`
   and capped like it (2000 lines or 50 KiB), opened at the bottom and scrolled
   with the arrows, page up/down, home and end; it re-reads the log every second

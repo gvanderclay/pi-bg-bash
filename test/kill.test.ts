@@ -294,16 +294,17 @@ describe("/bg", () => {
 		assert.equal(session().hasCommand("bg"), true);
 	});
 
-	it("lists every task; x asks, then kills the task with one 'killed by user' message and lists again", async () => {
+	it("lists running tasks first, then the most recently started; x asks, then kills the task with one 'killed by user' message and lists again", async () => {
 		const s = session();
 		const done = await start(s, "echo hi");
 		procs.of(done).exit(0);
 		await clock.until(() => s.sent.length > 0);
 		const running = await start(s, "sleep 30");
 		const proc = procs.of(running);
-		s.dialogs.keys = [[keys.down, "x"], [keys.escape]];
+		s.dialogs.keys = [["x"], [keys.escape]];
 		await clock.settle(s.command("bg"));
 		const [first, second] = s.dialogs.screens;
+		assert.ok(first.join("\n").indexOf(running) < first.join("\n").indexOf(done));
 		assert.match(first.join("\n"), new RegExp(`${done} \\| exited \\(code 0\\) \\| 2\\.0s \\| echo hi`));
 		assert.match(first.join("\n"), new RegExp(`${running} \\| running \\| 0\\.0s \\| sleep 30`));
 		assert.deepEqual(s.dialogs.confirms, [`Kill ${running}?`]);

@@ -28,8 +28,15 @@ const REFRESH_MS = 1000;
 
 type Pick = { task: Task; action: "view" | "kill" };
 
+/** The tasks as `/bg` lists them: running first, then the most recently started. */
+function listed(): Task[] {
+	return [...getRegistry().tasks.values()].sort(
+		(a, b) => Number(b.state === "running") - Number(a.state === "running") || b.startedAt - a.startedAt,
+	);
+}
+
 export async function bgCommand(ctx: ExtensionCommandContext): Promise<void> {
-	const tasks = (): Task[] => [...getRegistry().tasks.values()];
+	const tasks = listed;
 	if (tasks().length === 0) return ctx.ui.notify("No background tasks.", "info");
 	if (!ctx.hasUI) return ctx.ui.notify(tasks().map(taskLine).join("\n"), "info");
 	if (ctx.mode !== "tui") {
@@ -76,7 +83,7 @@ function taskList(
 	const container = new Container();
 	// SelectList cannot swap its items, so each refresh builds a new one and keeps the selected task.
 	const build = (keep: string | undefined, fallback: number): void => {
-		tasks = [...getRegistry().tasks.values()];
+		tasks = listed();
 		const items = tasks.map((task) => ({ value: task.id, label: taskLine(task) }));
 		list = new SelectList(items, Math.max(1, Math.min(items.length, 10)), {
 			selectedPrefix: accent,
