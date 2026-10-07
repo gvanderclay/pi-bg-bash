@@ -364,6 +364,15 @@ describe("/bg", () => {
 		assert.match(text(await s.toolCall("bash_output", { id })), /^Task bg-\d+: running\.\nline 1\n/);
 	});
 
+	it("q closes the list", async () => {
+		const s = session();
+		const id = await start(s, "sleep 30");
+		s.dialogs.keys = [["q"]];
+		await s.command("bg");
+		assert.equal(s.dialogs.screens.length, 1);
+		assert.deepEqual(procs.of(id).signals, []);
+	});
+
 	it("the kill confirmation shows the command on one line", async () => {
 		const s = session();
 		await start(s, "echo one\n  echo two");

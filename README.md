@@ -321,7 +321,7 @@ running or finished.
   a running task gets the completion message saying `killed by user`, a finished
   one has what it left running stopped, and you are told what happened. Esc in
   the output goes back to the list, which comes back after a kill too, with the
-  tasks' current state; esc in the list closes it. In RPC mode, which has no
+  tasks' current state; `q` or esc in the list closes it. In RPC mode, which has no
   custom components, `ctx.ui.select` over the tasks, and a pick asks the same
   confirmation before the kill. Without a UI it prints the list with
   `ctx.ui.notify` and kills nothing.
