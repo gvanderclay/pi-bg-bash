@@ -56,15 +56,18 @@ export default function (pi: ExtensionAPI): void {
 				Type.Boolean({ description: "Run the command as a detached background task and return its id" }),
 			),
 		}),
-		outputSchema: Type.Object({
-			...(builtin.outputSchema as TObject).properties,
-			exit_code: Type.Optional(Type.Number({ description: "Absent while the command runs on as task_id" })),
-			task_id: Type.Optional(
-				Type.String({
-					description: "Set when the command runs on as a background task; pass it to bash_output or bash_kill",
-				}),
-			),
-		}),
+		// A Pi whose bash has no output schema returns no structured result to extend.
+		outputSchema:
+			builtin.outputSchema &&
+			Type.Object({
+				...(builtin.outputSchema as TObject).properties,
+				exit_code: Type.Optional(Type.Number({ description: "Absent while the command runs on as task_id" })),
+				task_id: Type.Optional(
+					Type.String({
+						description: "Set when the command runs on as a background task; pass it to bash_output or bash_kill",
+					}),
+				),
+			}),
 		async execute(toolCallId, params, signal, onUpdate, ctx) {
 			setContext(ctx);
 			if (params.waitFor !== undefined && params.background)
