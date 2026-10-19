@@ -149,7 +149,9 @@ The rest of this README describes the behaviour in detail.
   `bash_tasks`), runtime and the last 20 lines of output, capped at 4 KiB.
   When the cap cut the output, its label says so and names `bash_output <id>`,
   which reads the whole log since the completion message never moves the read
-  position. A busy agent gets the message with its next tool result; a
+  position. A busy agent gets the message when its current turn ends, before
+  its next model request; one that ends while the agent writes its final
+  answer still arrives after it. A
   `followUp` would be held until the agent stopped, so every task that ended
   during a run would arrive after its final answer, one turn each, and a
   delegate's reply would become its answer to the last of them.

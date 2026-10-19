@@ -122,7 +122,7 @@ export function completionText(task: Task): string {
 	].join("\n");
 }
 
-/** Send the completion as a steering message, which a busy agent gets with its next tool result, and which starts a turn when the agent is idle. */
+/** Send the completion as a steering message, which a busy agent gets when its current turn ends, and which starts a turn when the agent is idle. */
 export function sendCompletion(pi: ExtensionAPI, task: Task): void {
 	pi.sendMessage(
 		{
