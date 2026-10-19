@@ -140,6 +140,78 @@ describe("bash_kill", () => {
 		assert.match(text(await s.toolCall("bash_tasks", {})), /killed \(killed by agent\)/);
 	});
 
+	it("returns the killed task and the outcome as data, and bash_tasks lists every task's fields", async () => {
+		const s = session();
+		const done = await start(s, "exit 2");
+		procs.of(done).exit(2);
+		await clock.until(() => s.sent.length > 0);
+		const id = await start(s, "server");
+		const killed = await clock.settle(s.toolCall("bash_kill", { id }));
+		const task = getRegistry().tasks.get(id);
+		assert.deepEqual(killed.structuredContent, {
+			task_id: id,
+			command: "server",
+			state: "killed",
+			reason: "killed by agent",
+			started_at_ms: task?.startedAt,
+			ended_at_ms: task?.endedAt,
+			runtime_ms: Number(task?.endedAt) - Number(task?.startedAt),
+			outcome: "killed",
+		});
+		const listed = (await s.toolCall("bash_tasks", {})).structuredContent as { tasks: Record<string, unknown>[] };
+		assert.deepEqual(
+			listed.tasks.map(({ task_id, state, exit_code, reason }) => ({ task_id, state, exit_code, reason })),
+			[
+				{ task_id: done, state: "exited", exit_code: 2, reason: undefined },
+				{ task_id: id, state: "killed", exit_code: undefined, reason: "killed by agent" },
+			],
+		);
+	});
+
+	it("returns the outcome as data for a group already gone, leftovers stopped, and leftovers that survive", async () => {
+		const s = session();
+		const outcome = async (id: string) =>
+			(await clock.settle(s.toolCall("bash_kill", { id }))).structuredContent as Record<string, unknown>;
+		const gone = await start(s, "zombie");
+		procs.of(gone).zombie();
+		const first = await outcome(gone);
+		assert.equal(first.outcome, "gone");
+		assert.equal(first.state, "exit-unknown");
+		const cleared = await start(s, "leaves a child");
+		procs.of(cleared).exit(0, { child: true });
+		assert.equal((await outcome(cleared)).outcome, "cleared");
+		const stuck = await start(s, "leaves a stuck child");
+		const proc = procs.of(stuck);
+		proc.ignoresTerm = true;
+		proc.unkillable = true;
+		proc.exit(0, { child: true });
+		const result = await outcome(stuck);
+		assert.equal(result.outcome, "leftover-stuck");
+		assert.equal(result.exit_code, 0);
+	});
+
+	it("bash_tasks lists a running task without ended_at_ms", async () => {
+		const s = session();
+		const id = await start(s, "server");
+		await clock.advance(1500);
+		const listed = (await s.toolCall("bash_tasks", {})).structuredContent as { tasks: Record<string, unknown>[] };
+		assert.deepEqual(listed.tasks, [
+			{
+				task_id: id,
+				command: "server",
+				state: "running",
+				started_at_ms: getRegistry().tasks.get(id)?.startedAt,
+				runtime_ms: 1500,
+			},
+		]);
+		assert.deepEqual(
+			text(await s.toolCall("bash_tasks", {}))
+				.split(" | ")
+				.slice(0, 3),
+			[id, "running", "1.5s"],
+		);
+	});
+
 	it("refuses to signal a pid of 1 or below", async () => {
 		const s = session();
 		for (const pid of [1, 0]) {

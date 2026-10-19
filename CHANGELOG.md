@@ -6,6 +6,15 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- `bash_output`, `bash_tasks` and `bash_kill` declare an output schema and
+  return matching structured results, so a codemode script can poll and kill a
+  task as objects instead of parsing text. The text the model reads is
+  unchanged.
+- All four tools set the `readOnlyHint`, `destructiveHint`, `idempotentHint`
+  and `openWorldHint` annotations.
+
 ## [0.2.2] - 2026-10-19
 
 ### Fixed

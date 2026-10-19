@@ -6,7 +6,7 @@
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, truncateTail } from "@earendil-works/pi-coding-agent";
 
 import { openView, type View } from "./logview.ts";
-import { stateText } from "./notify.ts";
+import { type StateData, stateData, stateText } from "./notify.ts";
 import type { Task } from "./registry.ts";
 import { sanitize } from "./sanitize.ts";
 
@@ -34,8 +34,15 @@ function applyFilter(text: string, filter: RegExp | undefined): { text: string; 
 	return { text: kept.join("\n"), note: `[filter: ${kept.length} of ${all.length} lines matched]` };
 }
 
-/** One `bash_output` call: the text to return, with `task.readPosition` already advanced. */
-export function readOutput(task: Task, options: OutputOptions): string {
+/**
+ * One `bash_output` call: the text for the model and the same read as data, with
+ * `task.readPosition` already advanced. `truncated` means the page left unread output
+ * behind (more remains, or `latest` skipped some); `unread_bytes` counts raw log bytes.
+ */
+export function readOutput(
+	task: Task,
+	options: OutputOptions,
+): { text: string; data: StateData & { task_id: string; output: string; truncated: boolean; unread_bytes: number } } {
 	let filter: RegExp | undefined;
 	try {
 		filter = options.filter === undefined ? undefined : new RegExp(options.filter);
@@ -45,6 +52,7 @@ export function readOutput(task: Task, options: OutputOptions): string {
 	const view = openView(task);
 	let body = "";
 	let note: string | undefined;
+	let unread = 0;
 	const code = view.marker?.code;
 	try {
 		const end = view.size;
@@ -55,6 +63,7 @@ export function readOutput(task: Task, options: OutputOptions): string {
 		body = sanitize(page.text);
 		note = page.note;
 		task.readPosition = page.next;
+		unread = end - page.next;
 	} finally {
 		view.close();
 	}
@@ -62,7 +71,16 @@ export function readOutput(task: Task, options: OutputOptions): string {
 	const parts = [`Task ${task.id}: ${stateText(task, code)}.`];
 	parts.push(filtered.text === "" ? (filtered.note ? "(no lines matched)" : "(no new output)") : filtered.text);
 	for (const extra of [filtered.note, note]) if (extra) parts.push(extra);
-	return parts.join("\n");
+	return {
+		text: parts.join("\n"),
+		data: {
+			task_id: task.id,
+			...stateData(task, code),
+			output: filtered.text,
+			truncated: note !== undefined,
+			unread_bytes: unread,
+		},
+	};
 }
 
 type Page = { text: string; next: number; note?: string };

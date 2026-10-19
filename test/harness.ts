@@ -10,6 +10,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { mock } from "node:test";
 
+import type { TSchema } from "typebox";
+import { Value } from "typebox/value";
+
 import register from "../src/index.ts";
 import type { LaunchOptions } from "../src/launch.ts";
 import { type ProcessPort, processPort, realPort, setProcessPort } from "../src/port.ts";
@@ -42,6 +45,7 @@ type Tool = {
 	description: string;
 	parameters: unknown;
 	outputSchema?: unknown;
+	annotations?: unknown;
 	execute: (id: string, params: never, signal: unknown, onUpdate: unknown, ctx: unknown) => Promise<ToolResult>;
 };
 type Handler = (event: unknown, ctx: unknown) => unknown;
@@ -205,11 +209,29 @@ export function session(options: { id?: string; hasUI?: boolean } = {}) {
 		/** One registered tool's definition. */
 		tool: (name: string) => tools[name],
 		/** Call a tool the way Pi does, with this session's context. */
-		toolCall: (name: string, params: unknown, signal?: AbortSignal): Promise<ToolResult> =>
-			tools[name].execute(`call-${++calls}`, params as never, signal, undefined, ctx),
+		toolCall: async (name: string, params: unknown, signal?: AbortSignal): Promise<ToolResult> => {
+			const result = await tools[name].execute(`call-${++calls}`, params as never, signal, undefined, ctx);
+			assertMatchesSchema(tools[name], result);
+			return result;
+		},
 		/** The session's log directory under the temporary state home. */
 		logDir: () => join(stateHome, "pi-bg", id),
 	};
+}
+
+/**
+ * Pi passes `structuredContent` on without checking it, so every result of a tool
+ * with an `outputSchema` is checked here: present, valid, and with no undeclared fields.
+ */
+export function assertMatchesSchema(tool: Tool, result: ToolResult): void {
+	const schema = tool.outputSchema as TSchema | undefined;
+	if (schema === undefined) return;
+	const data = result.structuredContent;
+	if (data === undefined) throw new Error(`${tool.name} returned no structuredContent`);
+	if (!Value.Check(schema, data) || !Value.Equal(Value.Clean(schema, structuredClone(data)), data))
+		throw new Error(
+			`${tool.name} structuredContent does not match its outputSchema: ${JSON.stringify(data)} ${JSON.stringify([...Value.Errors(schema, data)])}`,
+		);
 }
 
 const realSetTimeout = globalThis.setTimeout;

@@ -222,6 +222,50 @@ describe("bash_output", () => {
 	});
 });
 
+describe("bash_output structured result", () => {
+	it("carries the read as data: output, state from the marker the read saw, and the unread bytes", async () => {
+		const s = session();
+		const id = await start(s, "job");
+		const proc = procs.of(id);
+		proc.write("1\n2\nab");
+		const first = await out(s, { id });
+		assert.deepEqual(first.structuredContent, {
+			task_id: id,
+			state: "running",
+			output: "1\n2",
+			truncated: false,
+			unread_bytes: 2,
+		});
+		proc.write("c\n");
+		proc.exit(3); // no poller tick: the read sees the marker first
+		const second = await out(s, { id });
+		assert.match(text(second), /^Task bg-1: exited \(code 3\)\./);
+		assert.deepEqual(second.structuredContent, {
+			task_id: id,
+			state: "exited",
+			exit_code: 3,
+			output: "abc",
+			truncated: false,
+			unread_bytes: 0,
+		});
+	});
+
+	it("reports a capped page as truncated, with the unread count the note gives, and output after the filter", async () => {
+		const s = session();
+		const id = await finished(s, seq(1, 4500));
+		const page = await out(s, { id, filter: "^1$" });
+		const note = /More remaining: (\d+) bytes unread/.exec(text(page))?.[1];
+		assert.deepEqual(page.structuredContent, {
+			task_id: id,
+			state: "exited",
+			exit_code: 0,
+			output: "1",
+			truncated: true,
+			unread_bytes: Number(note),
+		});
+	});
+});
+
 describe("binary output", () => {
 	const fffd = (t: string) => t.split("\n").filter((l) => l === "\uFFFD").length;
 

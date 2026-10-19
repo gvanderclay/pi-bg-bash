@@ -70,6 +70,9 @@ at once instead of waiting.
   last read stopped, or only the newest output, optionally filtered by a regex.
 - `bash_tasks()` lists every task of the session with its state and runtime.
 - `bash_kill({ id })` stops a task and everything it started.
+- In a codemode script these three resolve to objects, not text (see
+  [Structured results](#structured-results)), and all four tools carry
+  annotation hints for permission extensions.
 - `/bg` lists the tasks; enter shows the selected task's output and `x` kills
   it after a confirmation.
 - `ctrl+shift+b` moves the running foreground command to the background. It
@@ -277,6 +280,30 @@ running or finished.
 - An unknown id, or an invalid filter, throws, which Pi reports as an error
   result.
 - The completion message's tail is separate and never moves the position.
+
+## Structured results
+
+`bash_output`, `bash_tasks` and `bash_kill` declare an `outputSchema` and return
+a matching `structuredContent`, so a codemode script gets an object; the model
+still reads the text. A task is described by `task_id`, `state` (`running`,
+`exited`, `killed` or `exit-unknown`), `exit_code` only when `exited` and
+`reason` only when `killed`, the same state the text reports.
+
+- `bash_output`: the state fields plus `output` (the text returned, after
+  `filter`; empty when nothing was), `truncated` (more is left, or `latest`
+  skipped some) and `unread_bytes` (raw log bytes not yet read). `state` comes
+  from the exit marker this read saw, so a task is done when `state` is not
+  `running` and `unread_bytes` is 0.
+- `bash_tasks`: `{ tasks }`, each with the state fields, the full `command`,
+  `started_at_ms`, `ended_at_ms` once ended, and `runtime_ms`.
+- `bash_kill`: one such task plus `outcome`: `killed`, `finished` (had already
+  ended), `gone` (had already ended, exit unknown), `cleared` (had ended; what it
+  left running was stopped), or `stuck` / `leftover-stuck` (survived SIGKILL).
+
+Annotations: `bash` is destructive and open-world; `bash_output` changes only
+the read position (not read-only, not destructive); `bash_tasks` is read-only
+and idempotent; `bash_kill` is destructive and idempotent. None but `bash`
+is open-world.
 
 ## Killing, listing and deadlines
 

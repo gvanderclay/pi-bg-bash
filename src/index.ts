@@ -14,7 +14,7 @@ import { rotateDebugLog } from "./debug.ts";
 import { foregroundRuns, PROMOTE_MS, runForeground } from "./foreground.ts";
 import { GRACE_MS } from "./kill.ts";
 import { cleanupOldLogs } from "./logs.ts";
-import { stateText, taskLine } from "./notify.ts";
+import { stateText, taskData, taskLine } from "./notify.ts";
 import { readOutput } from "./output.ts";
 import { attach, endSession, getRegistry, killTask, setContext, startTask } from "./registry.ts";
 
@@ -26,6 +26,37 @@ const BACKGROUND_DESCRIPTION =
 	"To wait for something outside this machine, such as CI, background one command that blocks until it is done, " +
 	"such as `gh run watch <run-id> --exit-status` or `gh pr checks <number> --watch`, instead of running `sleep N` and a check yourself. " +
 	`A foreground command with no \`timeout\` still running after ${PROMOTE_MS / 1000} s (unless it starts with \`sleep\`) moves to the background on its own.`;
+
+// No guard for a Pi without `outputSchema`, unlike bash's: these schemas stand alone,
+// and such a Pi ignores the unknown fields.
+const STATE_FIELDS = {
+	task_id: Type.String(),
+	state: Type.Union([
+		Type.Literal("running"),
+		Type.Literal("exited"),
+		Type.Literal("killed"),
+		Type.Literal("exit-unknown"),
+	]),
+	exit_code: Type.Optional(Type.Number({ description: "Set when state is exited" })),
+	reason: Type.Optional(
+		Type.Union(
+			[
+				Type.Literal("killed by agent"),
+				Type.Literal("killed by user"),
+				Type.Literal("timed out"),
+				Type.Literal("log limit passed"),
+			],
+			{ description: "Set when state is killed" },
+		),
+	),
+};
+const TASK_FIELDS = {
+	...STATE_FIELDS,
+	command: Type.String(),
+	started_at_ms: Type.Number({ description: "Epoch milliseconds" }),
+	ended_at_ms: Type.Optional(Type.Number({ description: "Epoch milliseconds; absent while running" })),
+	runtime_ms: Type.Number(),
+};
 
 export default function (pi: ExtensionAPI): void {
 	attach(pi);
@@ -68,6 +99,7 @@ export default function (pi: ExtensionAPI): void {
 					}),
 				),
 			}),
+		annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
 		async execute(toolCallId, params, signal, onUpdate, ctx) {
 			setContext(ctx);
 			if (params.waitFor !== undefined && params.background)
@@ -105,10 +137,21 @@ export default function (pi: ExtensionAPI): void {
 			latest: Type.Optional(Type.Boolean({ description: "Skip to the end of the log and return the newest output" })),
 			filter: Type.Optional(Type.String({ description: "Regex; return only the matching lines of the output read" })),
 		}),
+		outputSchema: Type.Object({
+			...STATE_FIELDS,
+			output: Type.String({ description: "The unread output this call returned, after `filter`" }),
+			truncated: Type.Boolean({ description: "More output remains unread, or `latest` skipped some" }),
+			unread_bytes: Type.Number({
+				description: "Log bytes not yet read; the task is done when state is not running and this is 0",
+			}),
+		}),
+		// Not read-only: each call moves the task's read position.
+		annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
 		async execute(_toolCallId, params) {
 			const task = getRegistry().tasks.get(params.id);
 			if (task === undefined) throw new Error(`Unknown task id: ${params.id}. bash_tasks lists this session's tasks.`);
-			return { content: [{ type: "text", text: readOutput(task, params) }], details: undefined };
+			const read = readOutput(task, params);
+			return { structuredContent: read.data, content: [{ type: "text", text: read.text }], details: undefined };
 		},
 	});
 	pi.registerTool({
@@ -118,10 +161,16 @@ export default function (pi: ExtensionAPI): void {
 			"List every background bash task of this session with its id, command, state, runtime, " +
 			"and exit code or reason. States: running, exited, killed, exit unknown.",
 		parameters: Type.Object({}),
+		outputSchema: Type.Object({ tasks: Type.Array(Type.Object(TASK_FIELDS)) }),
+		annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
 		async execute() {
 			const tasks = [...getRegistry().tasks.values()];
 			const text = tasks.length === 0 ? "No background tasks." : tasks.map(taskLine).join("\n");
-			return { content: [{ type: "text", text }], details: undefined };
+			return {
+				structuredContent: { tasks: tasks.map(taskData) },
+				content: [{ type: "text", text }],
+				details: undefined,
+			};
 		},
 	});
 	pi.registerTool({
@@ -133,6 +182,25 @@ export default function (pi: ExtensionAPI): void {
 		parameters: Type.Object({
 			id: Type.String({ description: "The task id returned by a background bash call" }),
 		}),
+		outputSchema: Type.Object({
+			...TASK_FIELDS,
+			outcome: Type.Union(
+				[
+					Type.Literal("killed"),
+					Type.Literal("finished"),
+					Type.Literal("gone"),
+					Type.Literal("cleared"),
+					Type.Literal("stuck"),
+					Type.Literal("leftover-stuck"),
+				],
+				{
+					description:
+						"killed: stopped now; finished: had already ended; gone: had already ended, exit unknown; " +
+						"cleared: had ended, its leftover processes stopped; stuck or leftover-stuck: survived SIGKILL",
+				},
+			),
+		}),
+		annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
 		async execute(_toolCallId, params) {
 			const task = getRegistry().tasks.get(params.id);
 			if (task === undefined) throw new Error(`Unknown task id: ${params.id}. bash_tasks lists this session's tasks.`);
@@ -149,7 +217,11 @@ export default function (pi: ExtensionAPI): void {
 								: outcome === "stuck"
 									? `Task ${task.id} was sent SIGKILL, but its process group is still running.`
 									: `Task ${task.id} killed; its process group is gone.`;
-			return { content: [{ type: "text", text }], details: undefined };
+			return {
+				structuredContent: { ...taskData(task), outcome },
+				content: [{ type: "text", text }],
+				details: undefined,
+			};
 		},
 	});
 	pi.registerCommand("bg", {

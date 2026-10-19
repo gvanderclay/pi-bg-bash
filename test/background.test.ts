@@ -165,4 +165,20 @@ describe("the bash tool's schema", () => {
 		assert.deepEqual(Object.keys(schema.properties).sort(), [...Object.keys(builtin.properties), "task_id"].sort());
 		assert.deepEqual(schema.required.sort(), builtin.required.filter((key) => key !== "exit_code").sort());
 	});
+
+	it("sets every annotation hint on each tool", () => {
+		const s = session();
+		const hints = (name: string) => s.tool(name).annotations;
+		const all = (readOnlyHint: boolean, destructiveHint: boolean, idempotentHint: boolean, openWorldHint: boolean) => ({
+			readOnlyHint,
+			destructiveHint,
+			idempotentHint,
+			openWorldHint,
+		});
+		assert.deepEqual(hints("bash"), all(false, true, false, true));
+		// bash_output moves the read position, so it is not read-only.
+		assert.deepEqual(hints("bash_output"), all(false, false, false, false));
+		assert.deepEqual(hints("bash_tasks"), all(true, false, true, false));
+		assert.deepEqual(hints("bash_kill"), all(false, true, true, false));
+	});
 });

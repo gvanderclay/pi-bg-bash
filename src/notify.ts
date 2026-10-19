@@ -3,7 +3,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import { debugError } from "./debug.ts";
 import { openView } from "./logview.ts";
-import type { Task } from "./registry.ts";
+import type { KillReason, Task, TaskState } from "./registry.ts";
 import { sanitize } from "./sanitize.ts";
 
 export const MESSAGE_TYPE = "pi-bg-bash";
@@ -62,6 +62,35 @@ export function stateText(task: Task, markerCode?: number): string {
 	if (task.state === "exited") return `exited (code ${task.exitCode})`;
 	if (task.state === "running") return markerCode === undefined ? "running" : `exited (code ${markerCode})`;
 	return "exit unknown";
+}
+
+export type StateData = { state: TaskState; exit_code?: number; reason?: KillReason };
+export type TaskData = StateData & {
+	task_id: string;
+	command: string;
+	started_at_ms: number;
+	ended_at_ms?: number;
+	runtime_ms: number;
+};
+
+/** `stateText` as data for structured results: `exit_code` only when exited, `reason` only when killed. */
+export function stateData(task: Task, markerCode?: number): StateData {
+	if (task.state === "killed") return { state: "killed", reason: task.reason };
+	if (task.state === "exited") return { state: "exited", exit_code: task.exitCode };
+	if (task.state === "running" && markerCode !== undefined) return { state: "exited", exit_code: markerCode };
+	return { state: task.state };
+}
+
+/** One task for `bash_tasks` and `bash_kill`, the data `taskLine` prints, with the full command. */
+export function taskData(task: Task): TaskData {
+	return {
+		task_id: task.id,
+		command: task.command,
+		...stateData(task),
+		started_at_ms: task.startedAt,
+		...(task.endedAt === undefined ? {} : { ended_at_ms: task.endedAt }),
+		runtime_ms: (task.endedAt ?? Date.now()) - task.startedAt,
+	};
 }
 
 /** How long the task has run, or ran: frozen at its end. */
