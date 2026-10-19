@@ -6,6 +6,12 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- A `bash` row that started a background task, or was moved to one, shows the
+  task's runtime (`Running 1m 5s`, updated every second) and then how it
+  ended, instead of Pi's `Took 0.0s`.
+
 ### Changed
 
 - The result of a call that goes on as a task, and the `bash_output`
@@ -24,9 +30,6 @@ follows [Semantic Versioning](https://semver.org/).
   unchanged.
 - All four tools set the `readOnlyHint`, `destructiveHint`, `idempotentHint`
   and `openWorldHint` annotations.
-- A `bash` row that started a background task, or was moved to one, shows the
-  task's runtime (`Running 1m 5s`, updated every second) and then how it
-  ended, instead of Pi's `Took 0.0s`.
 
 ## [0.2.2] - 2026-10-19
 
