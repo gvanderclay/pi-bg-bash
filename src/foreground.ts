@@ -368,6 +368,7 @@ export async function runForeground(
 		);
 		return { ...result, content };
 	}
+	run.task.toolCallId = toolCallId;
 	let output = result.content[0]?.type === "text" ? result.content[0].text : "";
 	const piFile = result.details?.fullOutputPath;
 	if (piFile !== undefined) {

@@ -66,6 +66,8 @@ export type Task = {
 	notified: boolean;
 	/** Consecutive polls that failed to read the log for a reason other than it being missing. */
 	readFailures: number;
+	/** The `bash` call that started the task or was moved into it, whose row shows its timer. */
+	toolCallId?: string;
 };
 
 type Registry = {
@@ -176,7 +178,7 @@ export function runningCount(registry = getRegistry()): number {
 }
 
 /** Footer: `bg: N` while N > 0 tasks run, cleared at 0. A stale context must not break the caller. */
-function updateFooter(registry: Registry): void {
+export function updateFooter(registry: Registry = getRegistry()): void {
 	try {
 		const running = runningCount(registry);
 		registry.ctx?.ui.setStatus("bg", running > 0 ? `bg: ${running}` : undefined);

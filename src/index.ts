@@ -17,6 +17,7 @@ import { cleanupOldLogs } from "./logs.ts";
 import { stateText, taskData, taskLine } from "./notify.ts";
 import { readOutput } from "./output.ts";
 import { attach, endSession, getRegistry, killTask, setContext, startTask } from "./registry.ts";
+import { withTaskTimer } from "./render.ts";
 
 const BACKGROUND_DESCRIPTION =
 	"Set `background: true` for a command you expect to outlast a minute or two, such as a long build, a deploy or a server, " +
@@ -100,6 +101,7 @@ export default function (pi: ExtensionAPI): void {
 				),
 			}),
 		annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+		renderResult: builtin.renderResult && withTaskTimer(builtin.renderResult),
 		async execute(toolCallId, params, signal, onUpdate, ctx) {
 			setContext(ctx);
 			if (params.waitFor !== undefined && params.background)
@@ -107,6 +109,7 @@ export default function (pi: ExtensionAPI): void {
 			if (!params.background) return runForeground(toolCallId, params, signal, onUpdate, ctx);
 			const startedAt = Date.now();
 			const task = await startTask(params.command, ctx, { timeout: params.timeout });
+			task.toolCallId = toolCallId;
 			return {
 				structuredContent: {
 					output: "",

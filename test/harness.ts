@@ -47,6 +47,12 @@ type Tool = {
 	outputSchema?: unknown;
 	annotations?: unknown;
 	execute: (id: string, params: never, signal: unknown, onUpdate: unknown, ctx: unknown) => Promise<ToolResult>;
+	renderResult?: (
+		result: unknown,
+		options: unknown,
+		theme: unknown,
+		context: never,
+	) => { render: (width: number) => string[] };
 };
 type Handler = (event: unknown, ctx: unknown) => unknown;
 type Command = { description?: string; handler: (args: string, ctx: unknown) => Promise<void> | void };

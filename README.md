@@ -112,6 +112,12 @@ The rest of this README describes the behaviour in detail.
   running without a crash watch (fail open).
 - **Spawn failures:** a missing working directory is refused with "Working
   directory does not exist"; a failed spawn rejects, and no log is left.
+- **Row timer:** the chat row of a `bash` call that started a task or was
+  promoted to one replaces Pi's `Took Ns` line with the task's runtime:
+  `Running 1m 5s`, redrawn every second, then how it ended, such as
+  `Exited (code 0) after 4m 10s` or `Killed (timed out) after 2m 0s`. A row
+  whose task this Pi process does not know, such as one in a session resumed
+  after a restart, keeps Pi's line.
 - **Logs:** `$XDG_STATE_HOME/pi-bg/<session-id>/<id>.log` (default
   `~/.local/state`), directory `0o700`, file `0o600`, created exclusively. The
   session directory carries an `owner.pid` marker naming the Pi process that
