@@ -26,8 +26,12 @@ export function withTaskTimer(builtin: RenderResult): RenderResult {
 		if (task === undefined) return builtin(result, options, theme, context);
 		const state = context.state as { taskTimer?: ReturnType<typeof setInterval> };
 		if (task.state === "running" && state.taskTimer === undefined) {
+			let ended = false;
 			const timer = setInterval(() => {
-				if (task.state !== "running" || registry.tasks.get(task.id) !== task) clearInterval(timer);
+				// Node 22's mock timers keep firing an interval cleared from its own callback; the flag keeps the tests' redraw count true.
+				if (ended) return;
+				ended = task.state !== "running" || registry.tasks.get(task.id) !== task;
+				if (ended) clearInterval(timer);
 				context.invalidate();
 				// Invalidating marks the row stale; the screen only redraws on a render request, which an idle
 				// agent never makes. Pi requests one on every status update.
