@@ -6,6 +6,15 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Pi's screen no longer flickers once a running background task's `bash`
+  row has scrolled off screen. The row redrew every second to count the
+  runtime, and Pi repaints the whole screen and scrollback whenever a line
+  above the screen changes. The row now shows when the task started
+  (`Running since 2:14:13 PM`) and redraws once, when the task ends. The
+  test that pinned the per-second redraw changes with it.
+
 ## [0.4.0] - 2026-10-19
 
 ### Added

@@ -45,7 +45,7 @@ function rowLines(s: Session, text: string, context: { toolCallId: string; state
 		.filter(Boolean);
 }
 
-it("a background call's row counts the task's runtime instead of Pi's Took, and redraws each second until the task ends", async () => {
+it("a background call's row shows when the task started instead of Pi's Took, and redraws once, when the task ends", async () => {
 	const s = session();
 	const id = await start(s, "sleep 300");
 	const task = getRegistry().tasks.get(id);
@@ -54,16 +54,17 @@ it("a background call's row counts the task's runtime instead of Pi's Took, and 
 	const context = { toolCallId: task.toolCallId, state: {}, invalidate: () => invalidations++ };
 	const lines = () => rowLines(s, `Started background task ${id}.`, context);
 
-	assert.deepEqual(lines(), [`Started background task ${id}.`, "Running 0.0s"]);
+	const since = `Running since ${new Date(task.startedAt).toLocaleTimeString()}`;
+	assert.deepEqual(lines(), [`Started background task ${id}.`, since]);
+	// A redraw of a row scrolled off screen repaints Pi's whole screen, so a running row never redraws.
 	await clock.advance(61_000);
-	assert.ok(invalidations >= 60, `${invalidations} redraws`);
-	assert.equal(lines().at(-1), "Running 1m 1s");
+	assert.equal(invalidations, 0);
+	assert.equal(lines().at(-1), since);
 	procs.of(id).exit(0);
 	await clock.until(() => task.state !== "running");
 	assert.match(lines().at(-1) ?? "", /^Exited \(code 0\) after 1m \ds$/);
-	const before = invalidations;
 	await clock.advance(5_000);
-	assert.ok(invalidations <= before + 1, "the redraws stop once the task has ended");
+	assert.equal(invalidations, 1, "one redraw, when the task ends");
 });
 
 it("a row whose call started no task keeps Pi's own rendering", () => {

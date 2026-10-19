@@ -7,15 +7,19 @@ import { getRegistry, type Task, updateFooter } from "./registry.ts";
 type RenderResult = NonNullable<ReturnType<typeof createBashToolDefinition>["renderResult"]>;
 type Args = Parameters<RenderResult>;
 
-/** The row's timer line: how long the task has run, or how it ended and after how long. */
+/**
+ * The row's timer line: when the task started, or how it ended and after how long. A running row
+ * shows no live runtime: changing a line that has scrolled off screen makes Pi's renderer clear and
+ * repaint the whole screen and scrollback, so a ticking row flickers once it is out of view.
+ */
 export function timerText(task: Task): string {
-	if (task.state === "running") return `Running ${runtimeText(task)}`;
+	if (task.state === "running") return `Running since ${new Date(task.startedAt).toLocaleTimeString()}`;
 	const state = stateText(task);
 	return `${state[0].toUpperCase()}${state.slice(1)} after ${runtimeText(task)}`;
 }
 
 /**
- * Pi's bash result renderer, with Pi's `Took` line replaced by the task's own timer on a row whose
+ * Pi's bash result renderer, with Pi's `Took` line replaced by the task's own timer line on a row whose
  * call started or became a background task. Pi's line would show how long the call took, which
  * for `background: true` is no time at all.
  */
@@ -31,7 +35,8 @@ export function withTaskTimer(builtin: RenderResult): RenderResult {
 				// Node 22's mock timers keep firing an interval cleared from its own callback; the flag keeps the tests' redraw count true.
 				if (ended) return;
 				ended = task.state !== "running" || registry.tasks.get(task.id) !== task;
-				if (ended) clearInterval(timer);
+				if (!ended) return;
+				clearInterval(timer);
 				context.invalidate();
 				// Invalidating marks the row stale; the screen only redraws on a render request, which an idle
 				// agent never makes. Pi requests one on every status update.
