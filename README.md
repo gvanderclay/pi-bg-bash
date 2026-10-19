@@ -181,7 +181,8 @@ output kept.
   wrapper is registered (id, footer `bg: N`, `bash_tasks`, one completion
   message, runtime counted from the start). `exec` then ends as if the command
   had exited 0, so Pi's bash closes its output and returns; the extension
-  discards that result except for the text, which it wraps as
+  keeps that result's text and structured output (its `exit_code` dropped,
+  `task_id` added) and wraps the text as
   `Command still running after 120 s; moved to the background as task <id>. ...
   Output so far: ...`. Nothing in Pi's bash is left pending. After promotion the
   turn's abort signal no longer reaches the process and no output flows to the

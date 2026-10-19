@@ -654,7 +654,9 @@ describe("a foreground bash call with waitFor", () => {
 		const call = s.toolCall("bash", { command: "serve", waitFor: "listening on" });
 		const proc = await launched();
 		proc.write("\x1b[32mlisten\x1b[0m\x07ing\r on :80\n");
-		assert.match(text(await clock.settle(call, 5000)), MATCHED);
+		const result = await clock.settle(call, 5000);
+		assert.match(text(result), MATCHED);
+		assert.equal((result.structuredContent as { output?: string }).output, "listening on :80\n");
 	});
 
 	it("makes an explicit timeout the task's deadline; the poller kills it as timed out", async () => {
