@@ -142,14 +142,17 @@ The rest of this README describes the behaviour in detail.
   `sendMessage` never stops the poller; a message that failed to send is
   retried on a later tick. A task is registered only after its spawn resolves.
 - **Completion message:** one `pi.sendMessage` custom message per task,
-  `deliverAs: "followUp"`, `triggerTurn: true`, with the id, the command (on
+  `deliverAs: "steer"`, `triggerTurn: true`, with the id, the command (on
   one line, newlines shown as ` ⏎ `, cut to 200 characters), exit state
   (`exited (code N)`, `killed (timed out)`, `killed (killed by user)`,
   `killed (log limit passed)`, or `exit unknown`, the same wording as
   `bash_tasks`), runtime and the last 20 lines of output, capped at 4 KiB.
   When the cap cut the output, its label says so and names `bash_output <id>`,
   which reads the whole log since the completion message never moves the read
-  position.
+  position. A busy agent gets the message with its next tool result; a
+  `followUp` would be held until the agent stopped, so every task that ended
+  during a run would arrive after its final answer, one turn each, and a
+  delegate's reply would become its answer to the last of them.
 - **Footer:** `ctx.ui.setStatus("bg", "bg: N")` while N tasks run.
 - A call without `background` is a foreground call; see below.
 - **Stripped output:** what the agent reads (the foreground result, `bash_output`

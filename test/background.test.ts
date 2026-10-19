@@ -53,7 +53,7 @@ describe("bash with background: true", () => {
 		await clock.until(() => s.sent.length > 0);
 	});
 
-	it("sends exactly one follow-up message that names the id, command, exit, runtime and output", async () => {
+	it("sends exactly one steering message that names the id, command, exit, runtime and output", async () => {
 		const s = session();
 		const id = await start(s, "echo one; echo two");
 		procs.of(id).write("one\ntwo\n");
@@ -62,7 +62,7 @@ describe("bash with background: true", () => {
 		await clock.tick(3); // more ticks must not resend
 		assert.equal(s.sent.length, 1);
 		const { message, options } = s.sent[0];
-		assert.deepEqual(options, { deliverAs: "followUp", triggerTurn: true });
+		assert.deepEqual(options, { deliverAs: "steer", triggerTurn: true });
 		assert.equal(message.display, true);
 		assert.equal(
 			message.content,

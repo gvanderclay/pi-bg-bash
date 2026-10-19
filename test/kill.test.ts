@@ -315,7 +315,7 @@ describe("a background timeout", () => {
 			s.sent[0].message.content,
 			new RegExp(`^Background task ${id} finished: killed \\(timed out\\), ran 6\\.1s\\.`),
 		);
-		assert.deepEqual(s.sent[0].options, { deliverAs: "followUp", triggerTurn: true });
+		assert.deepEqual(s.sent[0].options, { deliverAs: "steer", triggerTurn: true });
 		await clock.tick(3);
 		assert.equal(s.sent.length, 1);
 		assert.deepEqual(s.statuses.at(-1), { key: "bg", text: undefined });
@@ -388,7 +388,7 @@ describe("/bg", () => {
 			s.sent[1].message.content,
 			new RegExp(`^Background task ${running} finished: killed \\(killed by user\\), ran 0\\.2s\\.`),
 		);
-		assert.deepEqual(s.sent[1].options, { deliverAs: "followUp", triggerTurn: true });
+		assert.deepEqual(s.sent[1].options, { deliverAs: "steer", triggerTurn: true });
 	});
 
 	it("reports 'killed by user', never 'exit unknown', for a task that traps SIGTERM", async () => {

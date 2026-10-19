@@ -325,7 +325,7 @@ describe("a foreground bash call past 120 s", () => {
 			s.sent[0].message.content,
 			/^Background task bg-1 finished: exited \(code 3\), ran 2m 32s\.\nCommand: slow-build\nLast output:\ndone$/,
 		);
-		assert.deepEqual(s.sent[0].options, { deliverAs: "followUp", triggerTurn: true });
+		assert.deepEqual(s.sent[0].options, { deliverAs: "steer", triggerTurn: true });
 	});
 
 	it("shows the footer count once it is a task", async () => {

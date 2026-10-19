@@ -13,6 +13,11 @@ follows [Semantic Versioning](https://semver.org/).
 - A call moved to the background with `ctrl+shift+b` tells the model that
   the user did it on purpose and not to rerun the command or sleep in its
   place, instead of `Command still running after N s`.
+- A task's completion message reaches a busy agent with its next tool
+  result (`deliverAs: "steer"`) instead of waiting until the agent stops
+  (`followUp`). Before, every task that ended during a run arrived after the
+  agent's final answer, one turn each, so that answer was no longer the last
+  message. The tests that pin the delivery mode change with it.
 
 ## [0.3.0] - 2026-10-19
 

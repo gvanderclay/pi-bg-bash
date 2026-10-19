@@ -122,7 +122,7 @@ export function completionText(task: Task): string {
 	].join("\n");
 }
 
-/** Send the completion as a follow-up custom message that starts a turn when the agent is idle. */
+/** Send the completion as a steering message, which a busy agent gets with its next tool result, and which starts a turn when the agent is idle. */
 export function sendCompletion(pi: ExtensionAPI, task: Task): void {
 	pi.sendMessage(
 		{
@@ -131,6 +131,6 @@ export function sendCompletion(pi: ExtensionAPI, task: Task): void {
 			display: true,
 			details: { id: task.id, exitCode: task.exitCode, state: task.state },
 		},
-		{ deliverAs: "followUp", triggerTurn: true },
+		{ deliverAs: "steer", triggerTurn: true },
 	);
 }
