@@ -361,8 +361,16 @@ export async function runForeground(
 		output = retarget(output, piFile, run.task);
 		rmSync(piFile, { force: true }); // frozen at promotion; the task's log is the live copy
 	}
+	// Pi's exit code is the 0 `exec` resolved with at promotion, not the command's: drop it.
+	const { exit_code: _, ...rest } = (structured ?? {}) as Record<string, unknown>;
 	return {
 		content: [{ type: "text" as const, text: promotedText(run.task, run, output) }],
 		details: undefined,
+		structuredContent: {
+			...rest,
+			...(rest.full_output_path === undefined ? {} : { full_output_path: run.task.logPath }),
+			wall_time_seconds: Math.round(run.elapsedMs / 100) / 10,
+			task_id: run.task.id,
+		},
 	};
 }

@@ -139,6 +139,8 @@ describe("firing the shortcut", () => {
 		const b = await clock.settle(callB);
 		assert.match(text(a), /moved to the background as task bg-1/);
 		assert.match(text(b), /moved to the background as task bg-2/);
+		assert.equal((a.structuredContent as { task_id?: string }).task_id, "bg-1");
+		assert.equal((b.structuredContent as { task_id?: string }).task_id, "bg-2");
 		assert.equal(procs.all[0].pidAlive(), true);
 		assert.equal(procs.all[1].pidAlive(), true);
 	});

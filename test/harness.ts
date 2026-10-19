@@ -31,11 +31,17 @@ process.env.PATH = (process.env.PATH ?? "")
 export const cleanup = () => rmSync(root, { recursive: true, force: true });
 
 /** One tool result, the shape `execute` returns. */
-export type ToolResult = { content: { type: string; text: string }[]; details: unknown; isError?: boolean };
+export type ToolResult = {
+	content: { type: string; text: string }[];
+	details: unknown;
+	isError?: boolean;
+	structuredContent?: unknown;
+};
 type Tool = {
 	name: string;
 	description: string;
 	parameters: unknown;
+	outputSchema?: unknown;
 	execute: (id: string, params: never, signal: unknown, onUpdate: unknown, ctx: unknown) => Promise<ToolResult>;
 };
 type Handler = (event: unknown, ctx: unknown) => unknown;

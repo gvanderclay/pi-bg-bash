@@ -45,6 +45,14 @@ describe("bash with background: true", () => {
 		await clock.until(() => s.sent.length > 0);
 	});
 
+	it("gives scripts the task id and no exit code in its structured result", async () => {
+		const s = session();
+		const result = await s.toolCall("bash", { command: "sleep 30", background: true });
+		assert.deepEqual(result.structuredContent, { output: "", truncated: false, wall_time_seconds: 0, task_id: "bg-1" });
+		procs.all[0].exit(0);
+		await clock.until(() => s.sent.length > 0);
+	});
+
 	it("sends exactly one follow-up message that names the id, command, exit, runtime and output", async () => {
 		const s = session();
 		const id = await start(s, "echo one; echo two");
@@ -149,5 +157,12 @@ describe("the bash tool's schema", () => {
 		assert.doesNotMatch(tool.description.slice(builtin.description.length), /until [^;]*; do sleep/);
 		const properties = Object.keys((tool.parameters as { properties: object }).properties);
 		assert.deepEqual(properties.sort(), ["background", "command", "timeout", "waitFor"]);
+	});
+
+	it("keeps the built-in output schema, with exit_code optional and an optional task_id", () => {
+		const schema = session().tool("bash").outputSchema as { properties: object; required: string[] };
+		const builtin = createBashToolDefinition(root).outputSchema as { properties: object; required: string[] };
+		assert.deepEqual(Object.keys(schema.properties).sort(), [...Object.keys(builtin.properties), "task_id"].sort());
+		assert.deepEqual(schema.required.sort(), builtin.required.filter((key) => key !== "exit_code").sort());
 	});
 });

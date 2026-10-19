@@ -6,6 +6,14 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- In codemode scripts, a `bash` call that leaves the command running as a task
+  (`background: true`, `waitFor`, the 120 s move, `ctrl+shift+b`) resolves to
+  the declared object, with the new optional `task_id`, instead of a string.
+  `exit_code` is now optional in the tool's output schema: it is absent while
+  the command runs.
+
 ## [0.2.1] - 2026-10-07
 
 ### Changed

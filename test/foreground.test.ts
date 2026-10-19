@@ -288,6 +288,12 @@ describe("a foreground bash call past 120 s", () => {
 		const list = text(await s.toolCall("bash_tasks", {}));
 		assert.match(list, /^bg-1 \| running \| 2m 0s \| slow-build$/);
 		assert.equal(s.sent.length, 0);
+		assert.deepEqual(result.structuredContent, {
+			output: "compiling\n",
+			truncated: false,
+			wall_time_seconds: 120,
+			task_id: "bg-1",
+		});
 	});
 
 	it("is promoted no sooner than 120 s", async () => {
@@ -410,6 +416,28 @@ describe("a foreground bash call past 120 s", () => {
 			// bash_output continues after the last row shown.
 			proc.write("row 5001\n");
 			assert.doesNotMatch(text(await s.toolCall("bash_output", { id: "bg-1" })), /row 5000\n/);
+		} finally {
+			if (before === undefined) delete process.env.TMPDIR;
+			else process.env.TMPDIR = before;
+		}
+	});
+
+	it("gives scripts the task's log as full_output_path when the structured output passes 1 MiB", async () => {
+		const tmp = join(root, "tmp-structured");
+		mkdirSync(tmp, { recursive: true });
+		const before = process.env.TMPDIR;
+		process.env.TMPDIR = tmp;
+		try {
+			const s = session();
+			const call = s.toolCall("bash", { command: "slow-build" });
+			const proc = await launched();
+			proc.write(`${"x".repeat(99)}\n`.repeat(12_000));
+			const result = await clock.settle(call, 125_000);
+			const structured = result.structuredContent as Record<string, unknown>;
+			assert.equal(structured.truncated, true);
+			assert.equal(structured.full_output_path, getRegistry().tasks.get("bg-1")!.logPath);
+			assert.equal(structured.task_id, "bg-1");
+			assert.equal("exit_code" in structured, false);
 		} finally {
 			if (before === undefined) delete process.env.TMPDIR;
 			else process.env.TMPDIR = before;
@@ -591,9 +619,13 @@ describe("a foreground bash call with waitFor", () => {
 		const call = s.toolCall("bash", { command: "serve", waitFor: "listening on" });
 		const proc = await launched();
 		proc.write("starting\nlistening on :80\n");
-		const result = text(await clock.settle(call, 5000));
+		const raw = await clock.settle(call, 5000);
+		const result = text(raw);
 		assert.match(result, MATCHED);
 		assert.match(result, /Output so far:\nstarting\nlistening on :80\n$/);
+		assert.equal((raw.structuredContent as { task_id?: string }).task_id, "bg-1");
+		assert.equal((raw.structuredContent as { output?: string }).output, "starting\nlistening on :80\n");
+		assert.equal("exit_code" in (raw.structuredContent as object), false);
 		assert.equal(proc.pidAlive(), true);
 		assert.match(text(await s.toolCall("bash_tasks", {})), /^bg-1 \| running/);
 	});

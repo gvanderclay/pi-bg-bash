@@ -59,6 +59,13 @@ at once instead of waiting.
   `waitFor: "<text>"` (foreground only) returns as soon as the text appears in
   the output while the command keeps running as a task, for a server that
   should stay up.
+- A codemode script's `await tools.bash(...)` resolves to Pi's bash object,
+  `{ output, truncated, full_output_path?, exit_code?, wall_time_seconds, task_id? }`.
+  When the command goes on as a task (`background: true`, a `waitFor` match,
+  the 120 s move or `ctrl+shift+b`), `task_id` holds its id for `bash_output`
+  or `bash_kill`, `exit_code` is absent, `output` holds the output so far (empty
+  for `background: true`), and `full_output_path`, when the output was
+  truncated, is the task's log.
 - `bash_output({ id, latest?, filter? })` reads a task's output from where the
   last read stopped, or only the newest output, optionally filtered by a regex.
 - `bash_tasks()` lists every task of the session with its state and runtime.

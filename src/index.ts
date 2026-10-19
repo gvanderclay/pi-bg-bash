@@ -7,7 +7,7 @@
 // without `background` is Pi's own `bash` over the same wrapper (`foreground.ts`),
 // and moves to the background if it outlasts 120 s.
 import { createBashToolDefinition, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
+import { type TObject, Type } from "typebox";
 
 import { bgCommand } from "./bg.ts";
 import { rotateDebugLog } from "./debug.ts";
@@ -56,13 +56,29 @@ export default function (pi: ExtensionAPI): void {
 				Type.Boolean({ description: "Run the command as a detached background task and return its id" }),
 			),
 		}),
+		outputSchema: Type.Object({
+			...(builtin.outputSchema as TObject).properties,
+			exit_code: Type.Optional(Type.Number({ description: "Absent while the command runs on as task_id" })),
+			task_id: Type.Optional(
+				Type.String({
+					description: "Set when the command runs on as a background task; pass it to bash_output or bash_kill",
+				}),
+			),
+		}),
 		async execute(toolCallId, params, signal, onUpdate, ctx) {
 			setContext(ctx);
 			if (params.waitFor !== undefined && params.background)
 				throw new Error("waitFor applies to foreground calls: drop `background: true`, or drop `waitFor`.");
 			if (!params.background) return runForeground(toolCallId, params, signal, onUpdate, ctx);
+			const startedAt = Date.now();
 			const task = await startTask(params.command, ctx, { timeout: params.timeout });
 			return {
+				structuredContent: {
+					output: "",
+					truncated: false,
+					wall_time_seconds: Math.round((Date.now() - startedAt) / 100) / 10,
+					task_id: task.id,
+				},
 				content: [
 					{
 						type: "text",
