@@ -6,6 +6,14 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- The result of a call that goes on as a task, and the `bash_output`
+  description, now tell the model to end its turn rather than sleep or poll.
+- A call moved to the background with `ctrl+shift+b` tells the model that
+  the user did it on purpose and not to rerun the command or sleep in its
+  place, instead of `Command still running after N s`.
+
 ## [0.3.0] - 2026-10-19
 
 ### Added

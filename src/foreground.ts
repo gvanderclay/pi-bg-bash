@@ -29,6 +29,9 @@ import { sanitize } from "./sanitize.ts";
 
 /** How long a foreground command may run before it becomes a background task. */
 export const PROMOTE_MS = 120_000;
+/** Told whenever a command goes on as a task, so the model ends its turn instead of sleeping to wait. */
+export const COMPLETION_TEXT =
+	"Its completion is reported automatically and starts your next turn: if nothing else is left to do, end your turn now instead of sleeping or polling.";
 /** How long before the hint below the editor teaches the shortcut. */
 const HINT_MS = 2000;
 /** The hint widget's key and text; cleared when the call ends or is promoted. */
@@ -87,7 +90,13 @@ function heldBack(data: Buffer, nonce: string, last: boolean): number {
 }
 
 /** What a promotion leaves for the call's answer: the task and how long the command had run. */
-type Run = { task: Task | undefined; elapsedMs: number; waitFor?: string; matched: boolean };
+type Run = {
+	task: Task | undefined;
+	elapsedMs: number;
+	waitFor?: string;
+	matched: boolean;
+	by?: "timer" | "shortcut" | "waitFor";
+};
 
 /** The `exec` of one foreground call. `run.task` is set when the command was promoted. */
 function operations(ctx: ExtensionContext, run: Run) {
@@ -262,6 +271,7 @@ function operations(ctx: ExtensionContext, run: Run) {
 						// The call shows the output up to here; `bash_output` goes on after it.
 						task.readPosition = position;
 						run.elapsedMs = Date.now() - startedAt;
+						run.by = by;
 						// With `waitFor`, an explicit `timeout` becomes the task's deadline, as for `background: true`.
 						if (run.waitFor !== undefined && timeout !== undefined) task.deadline = startedAt + timeout * 1000;
 						run.task = adopt(task);
@@ -301,12 +311,15 @@ function retarget(text: string, piFile: string, task: Task): string {
 /** The text a promoted call answers with. */
 function promotedText(task: Task, run: Run, output: string): string {
 	const seconds = Math.round(run.elapsedMs / 100) / 10;
-	const head = run.matched
-		? `"${run.waitFor}" appeared after ${seconds} s; the command keeps running as background task ${task.id}. `
-		: `Command still running after ${seconds} s; moved to the background as task ${task.id}. `;
+	let head = `Command still running after ${seconds} s; moved to the background as task ${task.id}. `;
+	if (run.matched)
+		head = `"${run.waitFor}" appeared after ${seconds} s; the command keeps running as background task ${task.id}. `;
+	// Told no reason for the move, the model tends to rerun the command or sleep again; say the user meant it.
+	else if (run.by === "shortcut")
+		head = `The user pressed ctrl+shift+b after ${seconds} s: this command was deliberately moved to the background as task ${task.id}, so you are not blocked on it. Do not run it again or start a sleep in its place. `;
 	return (
 		head +
-		"Its completion is reported automatically." +
+		COMPLETION_TEXT +
 		(run.waitFor !== undefined && !run.matched ? ` "${run.waitFor}" never appeared in the output.` : "") +
 		"\n\n" +
 		`Output so far:\n${output === "(no output)" ? "" : output}`

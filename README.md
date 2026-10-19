@@ -56,6 +56,8 @@ at once instead of waiting.
   description tells the model to wait for something to finish (a CI run, a
   server coming up) with a blocking command such as `gh run watch <run-id>
   --exit-status` and `background: true`, never `sleep N` and then a check.
+  The result of a call that goes on as a task tells the model to end its turn
+  if nothing else is left, since the completion message starts its next one.
   `waitFor: "<text>"` (foreground only) returns as soon as the text appears in
   the output while the command keeps running as a task, for a server that
   should stay up.
@@ -213,7 +215,10 @@ output kept.
   contract test.
 - **Shortcut:** `ctrl+shift+b` moves the running foreground command to the
   background at once, without waiting the 120 s. It applies to any command,
-  including `sleep` and ones with an explicit `timeout`. With no foreground
+  including `sleep` and ones with an explicit `timeout`. The call answers
+  `The user pressed ctrl+shift+b after N s: this command was deliberately
+  moved to the background as task <id>, so you are not blocked on it. Do not
+  run it again or start a sleep in its place. ...`. With no foreground
   command running it does nothing. `ctrl+b` is left to Pi as cursor-left. When
   several foreground commands run at once (parallel tool calls), one press
   promotes every one of them, since the turn stays blocked until they all

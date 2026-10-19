@@ -11,7 +11,7 @@ import { type TObject, Type } from "typebox";
 
 import { bgCommand } from "./bg.ts";
 import { rotateDebugLog } from "./debug.ts";
-import { foregroundRuns, PROMOTE_MS, runForeground } from "./foreground.ts";
+import { COMPLETION_TEXT, foregroundRuns, PROMOTE_MS, runForeground } from "./foreground.ts";
 import { GRACE_MS } from "./kill.ts";
 import { cleanupOldLogs } from "./logs.ts";
 import { stateText, taskData, taskLine } from "./notify.ts";
@@ -117,7 +117,7 @@ export default function (pi: ExtensionAPI): void {
 				content: [
 					{
 						type: "text",
-						text: `Started background task ${task.id}. Its completion is reported automatically.`,
+						text: `Started background task ${task.id}. ${COMPLETION_TEXT}`,
 					},
 				],
 				details: undefined,
@@ -131,7 +131,8 @@ export default function (pi: ExtensionAPI): void {
 			"Read the output of a background bash task from where you last stopped, capped like `bash`. " +
 			"Each call returns only output you have not read yet and says how much remains. " +
 			"`latest: true` skips to the newest unread output. `filter` is a regex that keeps only matching lines. " +
-			"The result also says whether the task is running or has exited.",
+			"The result also says whether the task is running or has exited. " +
+			"Do not call it again and again to wait for the task to end: its completion is reported automatically.",
 		parameters: Type.Object({
 			id: Type.String({ description: "The task id returned by a background bash call" }),
 			latest: Type.Optional(Type.Boolean({ description: "Skip to the end of the log and return the newest output" })),

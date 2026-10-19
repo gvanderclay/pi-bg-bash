@@ -279,7 +279,10 @@ describe("a foreground bash call past 120 s", () => {
 		proc.write("compiling\n");
 		const result = await clock.settle(call);
 		assert.match(text(result), /^Command still running after 120 s; moved to the background as task bg-1\./);
-		assert.match(text(result), /Its completion is reported automatically\.\n\n/);
+		assert.match(
+			text(result),
+			/Its completion is reported automatically and starts your next turn: if nothing else is left to do, end your turn now instead of sleeping or polling\.\n\n/,
+		);
 		assert.match(text(result), /Output so far:\ncompiling\n$/);
 		assert.equal(result.isError, undefined);
 		assert.equal(procs.all.length, 1);
@@ -458,7 +461,10 @@ describe("the active foreground runs", () => {
 		);
 		[...foregroundRuns()][0].promote();
 		const result = await clock.settle(call);
-		assert.match(text(result), /^Command still running after 7 s; moved to the background as task bg-1\./);
+		assert.match(
+			text(result),
+			/^The user pressed ctrl\+shift\+b after 7 s: this command was deliberately moved to the background as task bg-1, so you are not blocked on it\. Do not run it again or start a sleep in its place\./,
+		);
 		assert.match(text(result), /Output so far:\nso far\n$/);
 		assert.equal(foregroundRuns().size, 0);
 		assert.equal(proc.pidAlive(), true);
@@ -697,7 +703,7 @@ describe("a foreground bash call with waitFor", () => {
 		proc.write("starting\n");
 		assert.match(
 			text(await clock.settle(call)),
-			/^Command still running after 120 s; moved to the background as task bg-1\. Its completion is reported automatically\. "listening on" never appeared in the output\.\n\nOutput so far:\nstarting\n$/,
+			/^Command still running after 120 s; moved to the background as task bg-1\. Its completion is reported automatically and starts your next turn: if nothing else is left to do, end your turn now instead of sleeping or polling\. "listening on" never appeared in the output\.\n\nOutput so far:\nstarting\n$/,
 		);
 	});
 
