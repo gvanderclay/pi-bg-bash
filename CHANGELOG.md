@@ -6,6 +6,16 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- A foreground `bash` call with an explicit `timeout` moves to the background at
+  the 120 s threshold like any other long command, instead of holding the turn
+  until it ends or the timeout kills it. Promotion keeps that timeout as the
+  task's deadline, so the command still dies at the moment it would have. The
+  two tests that pinned the old rule change with it: `is promoted at 120 s when
+  its timeout is longer, and keeps that timeout as its deadline` and `kills a
+  promoted command at its timeout, as a background task's deadline does`.
+
 ## [0.4.1] - 2026-10-19
 
 ### Fixed

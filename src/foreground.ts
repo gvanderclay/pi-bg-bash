@@ -71,9 +71,9 @@ function promoteMs(): number {
 	return Number.isFinite(set) && set > 0 ? set : PROMOTE_MS;
 }
 
-/** Whether auto-promotion applies: no explicit timeout, and not a deliberate wait. */
-function promotable(command: string, timeout: number | undefined): boolean {
-	return timeout === undefined && !/^\s*sleep(\s|$)/.test(command);
+/** Whether auto-promotion applies: anything but a deliberate wait. */
+function promotable(command: string): boolean {
+	return !/^\s*sleep(\s|$)/.test(command);
 }
 
 /**
@@ -272,15 +272,15 @@ function operations(ctx: ExtensionContext, run: Run) {
 						task.readPosition = position;
 						run.elapsedMs = Date.now() - startedAt;
 						run.by = by;
-						// With `waitFor`, an explicit `timeout` becomes the task's deadline, as for `background: true`.
-						if (run.waitFor !== undefined && timeout !== undefined) task.deadline = startedAt + timeout * 1000;
+						// An explicit `timeout` becomes the task's deadline, so promotion keeps the limit
+						if (timeout !== undefined) task.deadline = startedAt + timeout * 1000;
 						run.task = adopt(task);
 						resolve({ exitCode: 0 });
 					});
 				}
 				getRegistry().foreground.add(handle);
 				if (timeout !== undefined) timer = setTimeout(() => stop(new Error(`timeout:${timeout}`)), timeout * 1000);
-				if (promotable(command, timeout)) promoteTimer = setTimeout(() => promote("timer"), promoteMs());
+				if (promotable(command)) promoteTimer = setTimeout(() => promote("timer"), promoteMs());
 				if (ctx.hasUI)
 					hintTimer = setTimeout(() => {
 						try {

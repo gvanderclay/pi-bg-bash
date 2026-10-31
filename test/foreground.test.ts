@@ -539,7 +539,7 @@ describe("timer cleanup", () => {
 	});
 });
 
-describe("a foreground bash call that is not promoted", () => {
+describe("a foreground bash call with an explicit timeout", () => {
 	it("is killed at its explicit timeout and never promoted", async () => {
 		const s = session();
 		const call = s.toolCall("bash", { command: "slow-build", timeout: 5 });
@@ -552,16 +552,25 @@ describe("a foreground bash call that is not promoted", () => {
 		assert.equal(text(await s.toolCall("bash_tasks", {})), "No background tasks.");
 	});
 
-	it("is not promoted at 120 s when its timeout is longer", async () => {
+	it("is promoted at 120 s when its timeout is longer, and keeps that timeout as its deadline", async () => {
 		const s = session();
-		let settled = false;
-		const call = s.toolCall("bash", { command: "slow-build", timeout: 300 }).finally(() => (settled = true));
+		const call = s.toolCall("bash", { command: "slow-build", timeout: 300 });
 		const proc = await launched();
-		await clock.advance(200_000);
-		assert.equal(settled, false);
-		assert.equal(text(await s.toolCall("bash_tasks", {})), "No background tasks.");
+		await clock.advance(120_000);
+		assert.match(text(await clock.settle(call)), /moved to the background as task bg-1/);
+		assert.notEqual(getRegistry().tasks.get("bg-1")?.deadline, undefined);
 		proc.exit(0);
+	});
+
+	it("kills a promoted command at its timeout, as a background task's deadline does", async () => {
+		const s = session();
+		const call = s.toolCall("bash", { command: "slow-build", timeout: 200 });
+		const proc = await launched();
+		await clock.advance(120_000);
 		await clock.settle(call);
+		await clock.until(() => s.sent.length > 0, 120_000);
+		assert.deepEqual(proc.signals, ["SIGTERM"]);
+		assert.match(s.sent[0].message.content, /finished: killed \(timed out\)/);
 	});
 
 	it("is never promoted when the command starts with sleep", async () => {
