@@ -52,7 +52,7 @@ at once instead of waiting.
 
 - The `bash` tool keeps Pi's parameters and adds `background` and `waitFor`. Without `background` a
   call runs in the foreground as before, and moves to the background after
-  120 s unless it has an explicit `timeout` or starts with `sleep`. Its
+  120 s unless it starts with `sleep`. Its
   description tells the model to wait for something to finish (a CI run, a
   server coming up) with a blocking command such as `gh run watch <run-id>
   --exit-status` and `background: true`, never `sleep N` and then a check.
@@ -195,8 +195,8 @@ kept, as Pi's bash keeps inherited-pipe output. A command that vanishes without 
 exit marker ends the call with `Command terminated without an exit code`, its last
 output kept.
 
-- **Promotion:** a command still running 120 s after it started, with no
-  explicit `timeout` and not starting with `sleep`, becomes a task: the same live
+- **Promotion:** a command still running 120 s after it started, and not
+  starting with `sleep`, becomes a task: the same live
   wrapper is registered (id, footer `bg: N`, `bash_tasks`, one completion
   message, runtime counted from the start). `exec` then ends as if the command
   had exited 0, so Pi's bash closes its output and returns; the extension
@@ -224,8 +224,9 @@ output kept.
   and an empty `waitFor` are tool errors before anything starts. A match sends
   no message of its own; the completion message comes when the task ends. An
   escape sequence split across two reads is not stripped before matching.
-- **Not promoted:** a command with any explicit `timeout` (killed at it) or one
-  starting with `sleep`. `PI_BG_BASH_PROMOTE_MS` shortens the threshold, for the
+- **Not promoted:** a command starting with `sleep`. A promoted command keeps
+  an explicit `timeout` as its deadline, so it dies when it would have.
+  `PI_BG_BASH_PROMOTE_MS` shortens the threshold, for the
   contract test.
 - **Shortcut:** `ctrl+shift+b` moves the running foreground command to the
   background at once, without waiting the 120 s. It applies to any command,

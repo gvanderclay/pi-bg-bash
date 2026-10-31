@@ -194,7 +194,7 @@ describe("a foreground command", () => {
 		assert.deepEqual(existsSync(s.logDir()) ? readdirSync(s.logDir()).filter((name) => name !== "owner.pid") : [], []);
 	});
 
-	it("with an explicit timeout is killed at it, group and all, and never promoted", async () => {
+	it("with an explicit timeout is killed at it, group and all, before any promotion", async () => {
 		const s = session();
 		const [pidFile, gate] = [scratch("pid"), scratch("gate")];
 		const failure = await s.toolCall("bash", { command: blocked(pidFile, gate), timeout: 0.6 }).catch((e: Error) => e);
