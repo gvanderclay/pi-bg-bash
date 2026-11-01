@@ -32,7 +32,8 @@ To follow the latest commit instead, install it from GitHub:
 pi install git:github.com/gvanderclay/pi-bg-bash
 ```
 
-The package has no runtime dependencies and no build step.
+The package has no runtime dependencies and no build step. Tool declarations
+keep model-facing guidance compact without omitting parameters or result fields.
 
 ## First use
 

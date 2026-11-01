@@ -22,13 +22,12 @@ import { startWatch, validateContains, WATCH_LIMIT } from "./watch.ts";
 import { finishOutputRun, observeOutput, recordKill, resumeOutput, settleOutput, stopOutput } from "./watch-events.ts";
 
 const BACKGROUND_DESCRIPTION =
-	"Set `background: true` for a command you expect to outlast a minute or two, such as a long build, a deploy or a server, " +
-	"when you have other work to do meanwhile or nothing to do until it ends. " +
-	"The call returns a task id at once; when the command exits, a message with its exit status and last lines of output arrives " +
-	"and starts a turn if you are idle, so do not sleep or poll `bash_output` to wait for it. " +
-	"To wait for something outside this machine, such as CI, background one command that blocks until it is done, " +
-	"such as `gh run watch <run-id> --exit-status` or `gh pr checks <number> --watch`, instead of running `sleep N` and a check yourself. " +
-	"Without `background: true`, bash waits for command exit and returns its output; only an explicit `waitFor` match or the user’s ctrl+shift+b shortcut can move it to a background task.";
+	"Use background:true for long commands. It returns task_id immediately; exit status and tail arrive automatically, " +
+	"waking an idle agent. Do not sleep or poll bash_output for completion. " +
+	"For CI, background one blocking command (gh run watch <run-id> --exit-status or gh pr checks <number> --watch), not sleep-and-check loops. " +
+	"Foreground calls wait for exit; only waitFor or the user's ctrl+shift+b promotes them.";
+
+const TASK_ID = Type.String({ description: "Task id from bash in this session" });
 
 // No guard for a Pi without `outputSchema`, unlike bash's: these schemas stand alone,
 // and such a Pi ignores the unknown fields.
@@ -40,7 +39,7 @@ const STATE_FIELDS = {
 		Type.Literal("killed"),
 		Type.Literal("exit-unknown"),
 	]),
-	exit_code: Type.Optional(Type.Number({ description: "Set when state is exited" })),
+	exit_code: Type.Optional(Type.Number({ description: "When exited" })),
 	reason: Type.Optional(
 		Type.Union(
 			[
@@ -49,15 +48,15 @@ const STATE_FIELDS = {
 				Type.Literal("timed out"),
 				Type.Literal("log limit passed"),
 			],
-			{ description: "Set when state is killed" },
+			{ description: "When killed" },
 		),
 	),
 };
 const TASK_FIELDS = {
 	...STATE_FIELDS,
 	command: Type.String(),
-	started_at_ms: Type.Number({ description: "Epoch milliseconds" }),
-	ended_at_ms: Type.Optional(Type.Number({ description: "Epoch milliseconds; absent while running" })),
+	started_at_ms: Type.Number({ description: "Epoch ms" }),
+	ended_at_ms: Type.Optional(Type.Number({ description: "Epoch ms; absent while running" })),
 	runtime_ms: Type.Number(),
 };
 
@@ -83,28 +82,26 @@ export default function (pi: ExtensionAPI): void {
 			waitFor: Type.Optional(
 				Type.String({
 					description:
-						'Text to wait for in the output, such as "listening on" for a server. When it appears the call returns the output so far and the command keeps running as a background task. A `timeout` then limits the task, not the call.',
+						"Foreground only: promote on this output substring, returning output so far. timeout still limits the task.",
 				}),
 			),
 			hold: Type.Optional(
 				Type.Boolean({
 					description:
-						"With background:true, prevent completion-host finalization until this task’s terminal result has been processed; requires a live completion host.",
+						"Requires background:true and a live completion host; blocks host finalization until the terminal result is processed.",
 				}),
 			),
-			background: Type.Optional(
-				Type.Boolean({ description: "Run the command as a detached background task and return its id" }),
-			),
+			background: Type.Optional(Type.Boolean({ description: "Detach and return task_id immediately" })),
 		}),
 		// A Pi whose bash has no output schema returns no structured result to extend.
 		outputSchema:
 			builtin.outputSchema &&
 			Type.Object({
 				...(builtin.outputSchema as TObject).properties,
-				exit_code: Type.Optional(Type.Number({ description: "Absent while the command runs on as task_id" })),
+				exit_code: Type.Optional(Type.Number({ description: "Absent when task_id is set" })),
 				task_id: Type.Optional(
 					Type.String({
-						description: "Set when the command runs on as a background task; pass it to bash_output or bash_kill",
+						description: "Background handle for bash_output, bash_watch or bash_kill",
 					}),
 				),
 			}),
@@ -206,22 +203,18 @@ export default function (pi: ExtensionAPI): void {
 		name: "bash_output",
 		label: "bash_output",
 		description:
-			"Read the output of a background bash task from where you last stopped, capped like `bash`. " +
-			"Each call returns only output you have not read yet and says how much remains. " +
-			"`latest: true` skips to the newest unread output. `filter` is a regex that keeps only matching lines. " +
-			"The result also says whether the task is running or has exited. " +
-			"Do not call it again and again to wait for the task to end: its completion is reported automatically.",
+			"Read unread task output, capped like bash; advances the read cursor. Returns state and remaining bytes. Completion arrives automatically; do not poll to wait.",
 		parameters: Type.Object({
-			id: Type.String({ description: "The task id returned by a background bash call" }),
-			latest: Type.Optional(Type.Boolean({ description: "Skip to the end of the log and return the newest output" })),
-			filter: Type.Optional(Type.String({ description: "Regex; return only the matching lines of the output read" })),
+			id: TASK_ID,
+			latest: Type.Optional(Type.Boolean({ description: "Skip earlier unread output; return newest" })),
+			filter: Type.Optional(Type.String({ description: "Regex over this page; return matching lines" })),
 		}),
 		outputSchema: Type.Object({
 			...STATE_FIELDS,
-			output: Type.String({ description: "The unread output this call returned, after `filter`" }),
+			output: Type.String({ description: "Unread page after filter" }),
 			truncated: Type.Boolean({ description: "More output remains unread, or `latest` skipped some" }),
 			unread_bytes: Type.Number({
-				description: "Log bytes not yet read; the task is done when state is not running and this is 0",
+				description: "Unread log bytes; fully drained when 0 and state is not running",
 			}),
 		}),
 		// Not read-only: each call moves the task's read position.
@@ -236,9 +229,7 @@ export default function (pi: ExtensionAPI): void {
 	pi.registerTool({
 		name: "bash_tasks",
 		label: "bash_tasks",
-		description:
-			"List every background bash task of this session with its id, command, state, runtime, " +
-			"and exit code or reason. States: running, exited, killed, exit unknown.",
+		description: "List this session's background tasks, including finished tasks.",
 		parameters: Type.Object({}),
 		outputSchema: Type.Object({ tasks: Type.Array(Type.Object(TASK_FIELDS)) }),
 		annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
@@ -255,11 +246,9 @@ export default function (pi: ExtensionAPI): void {
 	pi.registerTool({
 		name: "bash_kill",
 		label: "bash_kill",
-		description:
-			"Stop a background bash task and everything it started: SIGTERM to its process group, then SIGKILL " +
-			`after about ${GRACE_MS / 1000} s if anything is left. No completion message follows; the result reports the final state.`,
+		description: `Stop the task's process group: SIGTERM, then SIGKILL after ~${GRACE_MS / 1000}s if needed. Returns final state; no completion message.`,
 		parameters: Type.Object({
-			id: Type.String({ description: "The task id returned by a background bash call" }),
+			id: TASK_ID,
 		}),
 		outputSchema: Type.Object({
 			...TASK_FIELDS,

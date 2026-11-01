@@ -19,6 +19,8 @@ follows [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- Shorter model-facing bash tool declarations reduce context use without changing
+  parameters, structured results, task states or lifecycle behavior.
 - Ordinary foreground `bash` calls no longer automatically move to the background
   after 120 seconds, regardless of command spelling. They wait for exit and return
   normal output; explicit timeout and abort cancellation still apply. Task handles
