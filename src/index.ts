@@ -22,10 +22,13 @@ import { startWatch, validateContains, WATCH_LIMIT } from "./watch.ts";
 import { finishOutputRun, observeOutput, recordKill, resumeOutput, settleOutput, stopOutput } from "./watch-events.ts";
 
 const BACKGROUND_DESCRIPTION =
-	"Use background:true for long commands. It returns task_id immediately; exit status and tail arrive automatically, " +
-	"waking an idle agent. Do not sleep or poll bash_output for completion. " +
-	"For CI, background one blocking command (gh run watch <run-id> --exit-status or gh pr checks <number> --watch), not sleep-and-check loops. " +
-	"Foreground calls wait for exit; only waitFor or the user's ctrl+shift+b promotes them.";
+	"Set `background: true` for a command you expect to outlast a minute or two. " +
+	"It returns task_id immediately; exit status and tail arrive automatically, waking an idle agent, " +
+	"so do not sleep or poll `bash_output` to wait for it. " +
+	"For CI, background one blocking command such as `gh run watch <run-id> --exit-status` or `gh pr checks <number> --watch` " +
+	"instead of running `sleep N` and a check yourself. " +
+	"Otherwise bash waits for command exit and returns its output; " +
+	"only an explicit `waitFor` match or the user’s ctrl+shift+b shortcut can promote it.";
 
 const TASK_ID = Type.String({ description: "Task id from bash in this session" });
 
