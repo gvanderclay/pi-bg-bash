@@ -1,14 +1,14 @@
 // A foreground `bash` call. Pi's own `bash` runs unchanged, over a custom
 // `exec` (its `BashOperations`) that starts the command through the same
 // detached wrapper background tasks use and feeds the log back through `onData`.
-// A command still running after 120 s, with no explicit `timeout` and not
-// starting with `sleep`, is promoted: the same live process becomes a registered
-// task, and `exec` ends as if the command had finished, so the delegate closes
+// Only an explicit `waitFor` match or the user’s shortcut promotes a foreground
+// call: the same live process becomes a registered task, and `exec` ends as if
+// the command had finished, so the delegate closes
 // its own output and returns what it has. The call then answers with that output
 // and the task id. Nothing in the delegate is left pending or leaked, the turn's
 // abort signal stops reaching the process, and no more output flows to the call.
 // Every running call is in `foregroundRuns()` with a `promote` handle: that is
-// the one promotion path, for the timer here and for any other trigger.
+// the one promotion path, for the shortcut and an explicit waitFor match.
 import { rmSync } from "node:fs";
 import { StringDecoder } from "node:string_decoder";
 
@@ -27,8 +27,6 @@ import { processPort } from "./port.ts";
 import { adopt, forgetGroup, getRegistry, launchGroup, makeTask, release, reserve, type Task } from "./registry.ts";
 import { sanitize } from "./sanitize.ts";
 
-/** How long a foreground command may run before it becomes a background task. */
-export const PROMOTE_MS = 120_000;
 /** Told whenever a command goes on as a task, so the model ends its turn instead of sleeping to wait. */
 export const COMPLETION_TEXT =
 	"Its completion is reported automatically and starts your next turn: if nothing else is left to do, end your turn now instead of sleeping or polling.";
@@ -50,7 +48,7 @@ export type ForegroundRun = {
 	/** When the command started, in `Date.now()` terms. */
 	startedAt: number;
 	/** Turn the command into a background task and end the call. Does nothing once the call is over. `by` is only for the debug log. */
-	promote(by?: "timer" | "shortcut" | "waitFor"): void;
+	promote(by?: "shortcut" | "waitFor"): void;
 };
 
 /** The foreground calls running now, not yet promoted or ended. Kept in the registry so a reloaded copy of this module sees them. */
@@ -63,17 +61,6 @@ function checkTimeout(timeout: number | undefined): void {
 	if (timeout === undefined) return;
 	if (!Number.isFinite(timeout) || timeout <= 0) throw new Error("Invalid timeout: must be a finite number of seconds");
 	if (timeout * 1000 > MAX_TIMEOUT_MS) throw new Error(`Invalid timeout: maximum is ${MAX_TIMEOUT_MS / 1000} seconds`);
-}
-
-/** The promotion threshold; the contract test shortens it with `PI_BG_BASH_PROMOTE_MS`. */
-function promoteMs(): number {
-	const set = Number(process.env.PI_BG_BASH_PROMOTE_MS);
-	return Number.isFinite(set) && set > 0 ? set : PROMOTE_MS;
-}
-
-/** Whether auto-promotion applies: no explicit timeout, and not a deliberate wait. */
-function promotable(command: string, timeout: number | undefined): boolean {
-	return timeout === undefined && !/^\s*sleep(\s|$)/.test(command);
 }
 
 /**
@@ -95,7 +82,6 @@ type Run = {
 	elapsedMs: number;
 	waitFor?: string;
 	matched: boolean;
-	by?: "timer" | "shortcut" | "waitFor";
 };
 
 /** The `exec` of one foreground call. `run.task` is set when the command was promoted. */
@@ -120,7 +106,13 @@ function operations(ctx: ExtensionContext, run: Run) {
 				throw error;
 			}
 			const startedAt = Date.now();
-			const task = makeTask(reservation, { command, cwd, pid, startedAt });
+			const task = makeTask(reservation, {
+				command,
+				cwd,
+				pid,
+				startedAt,
+				ownerSessionId: ctx.sessionManager.getSessionId(),
+			});
 			let position = 0;
 			// `waitFor` is matched on the stripped output as it arrives. `tail` is the last
 			// `waitFor.length - 1` stripped characters, so a match can span two reads.
@@ -162,7 +154,6 @@ function operations(ctx: ExtensionContext, run: Run) {
 				let done = false;
 				const handle: ForegroundRun = { command, startedAt, promote };
 				let timer: ReturnType<typeof setTimeout> | undefined;
-				let promoteTimer: ReturnType<typeof setTimeout> | undefined;
 				let lateTimer: ReturnType<typeof setTimeout> | undefined;
 				let hintTimer: ReturnType<typeof setTimeout> | undefined;
 				let hintShown = false;
@@ -187,7 +178,6 @@ function operations(ctx: ExtensionContext, run: Run) {
 					done = true;
 					clearInterval(poll);
 					clearTimeout(timer);
-					clearTimeout(promoteTimer);
 					clearTimeout(lateTimer);
 					clearHint();
 					getRegistry().foreground.delete(handle);
@@ -261,7 +251,7 @@ function operations(ctx: ExtensionContext, run: Run) {
 					stop(new Error("aborted"));
 				}
 				/** The one promotion path: register the live process as a task and end `exec` so the delegate returns. */
-				function promote(by: "timer" | "shortcut" | "waitFor" = "shortcut") {
+				function promote(by: "shortcut" | "waitFor" = "shortcut") {
 					if (done) return;
 					check(); // a command that just ended ends normally
 					if (done || exitCode !== null) return;
@@ -271,7 +261,6 @@ function operations(ctx: ExtensionContext, run: Run) {
 						// The call shows the output up to here; `bash_output` goes on after it.
 						task.readPosition = position;
 						run.elapsedMs = Date.now() - startedAt;
-						run.by = by;
 						// With `waitFor`, an explicit `timeout` becomes the task's deadline, as for `background: true`.
 						if (run.waitFor !== undefined && timeout !== undefined) task.deadline = startedAt + timeout * 1000;
 						run.task = adopt(task);
@@ -280,7 +269,6 @@ function operations(ctx: ExtensionContext, run: Run) {
 				}
 				getRegistry().foreground.add(handle);
 				if (timeout !== undefined) timer = setTimeout(() => stop(new Error(`timeout:${timeout}`)), timeout * 1000);
-				if (promotable(command, timeout)) promoteTimer = setTimeout(() => promote("timer"), promoteMs());
 				if (ctx.hasUI)
 					hintTimer = setTimeout(() => {
 						try {
@@ -311,12 +299,10 @@ function retarget(text: string, piFile: string, task: Task): string {
 /** The text a promoted call answers with. */
 function promotedText(task: Task, run: Run, output: string): string {
 	const seconds = Math.round(run.elapsedMs / 100) / 10;
-	let head = `Command still running after ${seconds} s; moved to the background as task ${task.id}. `;
-	if (run.matched)
-		head = `"${run.waitFor}" appeared after ${seconds} s; the command keeps running as background task ${task.id}. `;
-	// Told no reason for the move, the model tends to rerun the command or sleep again; say the user meant it.
-	else if (run.by === "shortcut")
-		head = `The user pressed ctrl+shift+b after ${seconds} s: this command was deliberately moved to the background as task ${task.id}, so you are not blocked on it. Do not run it again or start a sleep in its place. `;
+	// Told no reason for the move, the model tends to rerun the command or sleep again.
+	const head = run.matched
+		? `"${run.waitFor}" appeared after ${seconds} s; the command keeps running as background task ${task.id}. `
+		: `The user pressed ctrl+shift+b after ${seconds} s: this command was deliberately moved to the background as task ${task.id}, so you are not blocked on it. Do not run it again or start a sleep in its place. `;
 	return (
 		head +
 		COMPLETION_TEXT +
@@ -326,7 +312,7 @@ function promotedText(task: Task, run: Run, output: string): string {
 	);
 }
 
-/** Run a foreground call: Pi's `bash` over the wrapper, promoted to a task when it outlasts the threshold. */
+/** Run foreground bash until exit/timeout/abort, unless waitFor or the user deliberately promotes it. */
 export async function runForeground(
 	toolCallId: string,
 	params: { command: string; timeout?: number; waitFor?: string },

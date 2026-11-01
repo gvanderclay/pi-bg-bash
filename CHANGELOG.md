@@ -6,6 +6,36 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Native `bash_watch` output subscriptions while background tasks keep running,
+  including outside codemode-only scripts. Notifications have independent cursors,
+  literal filters, bounded framing/backpressure and explicit loss counters.
+- Optional `hold: true` on existing background `bash` launches, atomically before
+  spawn, for compatible exact-session completion hosts. Terminal observation
+  gates readiness, including successful nested codemode kills. Ordinary launches,
+  completion text for unwatched tasks and session-exit cleanup keep their defaults.
+  The bash schema test deliberately adds the optional hold parameter.
+
+### Changed
+
+- Ordinary foreground `bash` calls no longer automatically move to the background
+  after 120 seconds, regardless of command spelling. They wait for exit and return
+  normal output; explicit timeout and abort cancellation still apply. Task handles
+  now require `background: true`, an opt-in `waitFor` match or the user's keyboard
+  shortcut. `PI_BG_BASH_PROMOTE_MS` no longer has an effect. Tests that pinned
+  automatic promotion deliberately change to cover waiting and manual promotion.
+
+### Fixed
+
+- Recover unseen output batches and held completion notifications after Escape,
+  abort or clearing Pi's custom-steer queue, preserving tokens and bounded payloads.
+  Recovery respects stopped/error runs; already-seen messages are not duplicated.
+  Unheld completion delivery keeps its existing behavior.
+- A successful nested `bash_kill` remains observable when its enclosing codemode
+  script later throws. Stuck outcomes still do not release a completion hold,
+  and terminal observation still requires a normal agent run end.
+
 ## [0.4.1] - 2026-10-19
 
 ### Fixed

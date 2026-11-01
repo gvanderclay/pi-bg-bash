@@ -1,6 +1,6 @@
 // Behaviour tier: a foreground `bash` call over the fake process table and fake
 // time. The call runs Pi's own `bash` over a custom `exec`, so a finished command
-// reads as Pi's does; one still running at 120 s becomes a background task.
+// reads as Pi's does; only explicit waitFor or the user shortcut promotes it.
 // The commands here are names no shell knows, so a red run never starts
 // anything real.
 import assert from "node:assert/strict";
@@ -271,14 +271,24 @@ describe("a foreground bash call whose end arrives oddly", () => {
 	}
 });
 
-describe("a foreground bash call past 120 s", () => {
+/** Exercise the retained manual-promotion contract after a long foreground wait. */
+async function manuallyPromote<T>(s: ReturnType<typeof session>, call: Promise<T>): Promise<T> {
+	await clock.advance(120_000);
+	s.shortcut("ctrl+shift+b");
+	return clock.settle(call);
+}
+
+describe("a foreground bash call deliberately moved by the user", () => {
 	it("returns the task id and the output so far, and the same process keeps running", async () => {
 		const s = session();
 		const call = s.toolCall("bash", { command: "slow-build" });
 		const proc = await launched();
 		proc.write("compiling\n");
-		const result = await clock.settle(call);
-		assert.match(text(result), /^Command still running after 120 s; moved to the background as task bg-1\./);
+		const result = await manuallyPromote(s, call);
+		assert.match(
+			text(result),
+			/^The user pressed ctrl\+shift\+b after 120 s: this command was deliberately moved to the background as task bg-1,/,
+		);
 		assert.match(
 			text(result),
 			/Its completion is reported automatically and starts your next turn: if nothing else is left to do, end your turn now instead of sleeping or polling\.\n\n/,
@@ -299,13 +309,14 @@ describe("a foreground bash call past 120 s", () => {
 		});
 	});
 
-	it("is promoted no sooner than 120 s", async () => {
+	it("waits for a deliberate user action before promotion", async () => {
 		const s = session();
 		let settled = false;
 		const call = s.toolCall("bash", { command: "slow-build" }).finally(() => (settled = true));
 		await launched();
 		await clock.advance(119_000);
 		assert.equal(settled, false);
+		s.shortcut("ctrl+shift+b");
 		await clock.settle(call);
 	});
 
@@ -313,7 +324,7 @@ describe("a foreground bash call past 120 s", () => {
 		const s = session();
 		const call = s.toolCall("bash", { command: "slow-build" });
 		const proc = await launched();
-		await clock.settle(call);
+		await manuallyPromote(s, call);
 		await clock.advance(30_000);
 		proc.write("done\n");
 		proc.exit(3);
@@ -332,7 +343,7 @@ describe("a foreground bash call past 120 s", () => {
 		const s = session();
 		const call = s.toolCall("bash", { command: "slow-build" });
 		await launched();
-		await clock.settle(call);
+		await manuallyPromote(s, call);
 		assert.deepEqual(s.statuses.at(-1), { key: "bg", text: "bg: 1" });
 	});
 
@@ -341,7 +352,7 @@ describe("a foreground bash call past 120 s", () => {
 		const turn = new AbortController();
 		const call = s.toolCall("bash", { command: "slow-build" }, turn.signal);
 		const proc = await launched();
-		await clock.settle(call);
+		await manuallyPromote(s, call);
 		turn.abort();
 		await clock.advance(5000);
 		assert.deepEqual(proc.signals, []);
@@ -349,7 +360,7 @@ describe("a foreground bash call past 120 s", () => {
 		assert.match(text(await s.toolCall("bash_tasks", {})), /running/);
 	});
 
-	it("still ends with the command when it exits before the promotion", async () => {
+	it("ends normally without creating a task when no promotion is requested", async () => {
 		const s = session();
 		const call = s.toolCall("bash", { command: "slow-build" });
 		const proc = await launched();
@@ -364,7 +375,7 @@ describe("a foreground bash call past 120 s", () => {
 		const s = session();
 		const call = s.toolCall("bash", { command: "slow-build" });
 		const proc = await launched();
-		await clock.settle(call);
+		await manuallyPromote(s, call);
 		const task = [...getRegistry().tasks.values()][0];
 		assert.equal(task.pid, proc.pid);
 		assert.equal(task.command, "slow-build");
@@ -372,18 +383,18 @@ describe("a foreground bash call past 120 s", () => {
 		assert.equal(task.deadline, undefined);
 	});
 
-	it("promotes a silent command with an empty output section", async () => {
+	it("manually promotes a silent command with an empty output section", async () => {
 		const s = session();
 		const call = s.toolCall("bash", { command: "slow-build" });
 		await launched();
-		assert.match(text(await clock.settle(call)), /moved to the background as task bg-1\..*\n\nOutput so far:\n$/s);
+		assert.match(text(await manuallyPromote(s, call)), /moved to the background as task bg-1,.*\n\nOutput so far:\n$/s);
 	});
 
-	it("promotes a command that merely starts like sleep, such as sleepy", async () => {
+	it("manually promotes a command regardless of a sleep-like prefix", async () => {
 		const s = session();
 		const call = s.toolCall("bash", { command: "sleepy 5" });
 		await launched();
-		assert.match(text(await clock.settle(call)), /moved to the background as task bg-1/);
+		assert.match(text(await manuallyPromote(s, call)), /moved to the background as task bg-1/);
 	});
 
 	it("leaves bash_output to continue after the output the call showed", async () => {
@@ -391,7 +402,7 @@ describe("a foreground bash call past 120 s", () => {
 		const call = s.toolCall("bash", { command: "slow-build" });
 		const proc = await launched();
 		proc.write("line1\nline2\n");
-		assert.match(text(await clock.settle(call)), /Output so far:\nline1\nline2\n$/);
+		assert.match(text(await manuallyPromote(s, call)), /Output so far:\nline1\nline2\n$/);
 		proc.write("line3\n");
 		const later = text(await s.toolCall("bash_output", { id: "bg-1" }));
 		assert.match(later, /line3/);
@@ -408,7 +419,7 @@ describe("a foreground bash call past 120 s", () => {
 			const call = s.toolCall("bash", { command: "slow-build" });
 			const proc = await launched();
 			proc.write(Array.from({ length: 5000 }, (_, i) => `row ${i + 1}\n`).join(""));
-			const result = await clock.settle(call, 125_000);
+			const result = await manuallyPromote(s, call);
 			const task = getRegistry().tasks.get("bg-1")!;
 			assert.match(text(result), /\[Showing lines 3001-5000 of 5000\. .*\]$/);
 			assert.ok(text(result).includes(task.logPath), "points at the task's log");
@@ -435,7 +446,7 @@ describe("a foreground bash call past 120 s", () => {
 			const call = s.toolCall("bash", { command: "slow-build" });
 			const proc = await launched();
 			proc.write(`${"x".repeat(99)}\n`.repeat(12_000));
-			const result = await clock.settle(call, 125_000);
+			const result = await manuallyPromote(s, call);
 			const structured = result.structuredContent as Record<string, unknown>;
 			assert.equal(structured.truncated, true);
 			assert.equal(structured.full_output_path, getRegistry().tasks.get("bg-1")!.logPath);
@@ -577,11 +588,18 @@ describe("a foreground bash call that is not promoted", () => {
 		assert.equal(text(await clock.settle(call)), "up\n");
 	});
 
-	it("does treat a command that merely mentions sleep as promotable", async () => {
+	it("does not background a command merely mentioning sleep", async () => {
 		const s = session();
-		const call = s.toolCall("bash", { command: "slow-build && sleep 1" });
-		await launched();
-		assert.match(text(await clock.settle(call)), /moved to the background as task bg-1/);
+		let settled = false;
+		const call = s.toolCall("bash", { command: "slow-build && sleep 1" }).finally(() => {
+			settled = true;
+		});
+		const proc = await launched();
+		await clock.advance(125_000);
+		assert.equal(settled, false);
+		assert.equal(getRegistry().tasks.size, 0);
+		proc.exit(0);
+		assert.equal(text(await clock.settle(call)), "(no output)");
 	});
 
 	it("kills the process group when the turn aborts, and reports the abort", async () => {
@@ -610,10 +628,14 @@ describe("a foreground bash call that is not promoted", () => {
 });
 
 describe("the bash description", () => {
-	it("says a slow foreground command moves to the background after 120 s", () => {
+	it("says ordinary bash waits and only explicit waitFor or user action can promote it", () => {
 		const tool = session().tool("bash");
-		assert.ok(tool.description.startsWith(createBashToolDefinition(root).description));
-		assert.match(tool.description, /still running after 120 s.*moves to the background/);
+		const builtin = createBashToolDefinition(root).description;
+		assert.ok(tool.description.startsWith(builtin));
+		const extra = tool.description.slice(builtin.length);
+		assert.match(extra, /bash waits for command exit and returns its output/);
+		assert.match(extra, /only an explicit `waitFor` match or the user’s ctrl\+shift\+b shortcut/);
+		assert.doesNotMatch(extra, /120 s|on its own|automatically.*background/);
 	});
 });
 
@@ -696,14 +718,14 @@ describe("a foreground bash call with waitFor", () => {
 		assert.equal(text(await clock.settle(call)), 'done\n\n\n"listening on" never appeared in the output.');
 	});
 
-	it("says the text never appeared when the 120 s promotion fires first", async () => {
+	it("says the text never appeared when the user requests promotion before a match", async () => {
 		const s = session();
 		const call = s.toolCall("bash", { command: "serve", waitFor: "listening on" });
 		const proc = await launched();
 		proc.write("starting\n");
 		assert.match(
-			text(await clock.settle(call)),
-			/^Command still running after 120 s; moved to the background as task bg-1\. Its completion is reported automatically and starts your next turn: if nothing else is left to do, end your turn now instead of sleeping or polling\. "listening on" never appeared in the output\.\n\nOutput so far:\nstarting\n$/,
+			text(await manuallyPromote(s, call)),
+			/^The user pressed ctrl\+shift\+b after 120 s: this command was deliberately moved to the background as task bg-1, so you are not blocked on it\. Do not run it again or start a sleep in its place\. Its completion is reported automatically and starts your next turn: if nothing else is left to do, end your turn now instead of sleeping or polling\. "listening on" never appeared in the output\.\n\nOutput so far:\nstarting\n$/,
 		);
 	});
 

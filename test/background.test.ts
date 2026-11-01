@@ -156,7 +156,7 @@ describe("the bash tool's schema", () => {
 		);
 		assert.doesNotMatch(tool.description.slice(builtin.description.length), /until [^;]*; do sleep/);
 		const properties = Object.keys((tool.parameters as { properties: object }).properties);
-		assert.deepEqual(properties.sort(), ["background", "command", "timeout", "waitFor"]);
+		assert.deepEqual(properties.sort(), ["background", "command", "hold", "timeout", "waitFor"]);
 	});
 
 	it("keeps the built-in output schema, with exit_code optional and an optional task_id", () => {

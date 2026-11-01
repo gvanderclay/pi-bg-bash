@@ -13,6 +13,7 @@ import {
 	type FakeProcesses,
 	fakeClock,
 	fakeProcesses,
+	gzipped,
 	resetRegistry,
 	restoreProcesses,
 	session,
@@ -115,16 +116,18 @@ describe("with PI_BG_BASH_DEBUG=1", () => {
 		const s = session();
 		const id = await start(s, "slow", { timeout: 5 });
 		await clock.until(() => s.sent.length > 0);
+		await clock.until(() => gzipped(s, id)); // finish async I/O before the next test clears its directory
 		assert.equal(events("deadline")[0].task, id);
 		assert.equal(events("kill")[0].reason, "timed out");
 	});
 
-	it("records the automatic promotion and the shortcut promotion", async () => {
+	it("records explicit waitFor and user-shortcut promotion", async () => {
 		debugOn();
 		const s = session();
-		const auto = s.toolCall("bash", { command: "slow-build" });
+		const ready = s.toolCall("bash", { command: "serve", waitFor: "ready" });
 		await clock.advance(100);
-		assert.match(text(await clock.settle(auto)), /moved to the background as task bg-1/);
+		procs.all[0].write("ready\n");
+		assert.match(text(await clock.settle(ready)), /^"ready" appeared/);
 		const byShortcut = s.toolCall("bash", { command: "other-build" });
 		await clock.advance(100);
 		s.shortcut("ctrl+shift+b");
@@ -133,7 +136,7 @@ describe("with PI_BG_BASH_DEBUG=1", () => {
 		assert.deepEqual(
 			promoted.map((p) => [p.by, p.command]),
 			[
-				["timer", "slow-build"],
+				["waitFor", "serve"],
 				["shortcut", "other-build"],
 			],
 		);

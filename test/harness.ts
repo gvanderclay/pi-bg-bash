@@ -46,6 +46,7 @@ type Tool = {
 	parameters: unknown;
 	outputSchema?: unknown;
 	annotations?: unknown;
+	exposure?: string;
 	execute: (id: string, params: never, signal: unknown, onUpdate: unknown, ctx: unknown) => Promise<ToolResult>;
 	renderResult?: (
 		result: unknown,
@@ -56,7 +57,10 @@ type Tool = {
 };
 type Handler = (event: unknown, ctx: unknown) => unknown;
 type Command = { description?: string; handler: (args: string, ctx: unknown) => Promise<void> | void };
-type Sent = { message: { customType: string; content: string; display?: boolean }; options: unknown };
+type Sent = {
+	message: { customType: string; content: string; display?: boolean; details?: unknown };
+	options: unknown;
+};
 type CustomFactory = (
 	tui: unknown,
 	theme: unknown,
@@ -166,6 +170,8 @@ export function session(options: { id?: string; hasUI?: boolean } = {}) {
 		},
 	};
 	const ctx = {
+		isIdle: () => true,
+		hasPendingMessages: () => false,
 		cwd: root,
 		mode: "tui" as "tui" | "rpc",
 		get hasUI() {
@@ -187,6 +193,12 @@ export function session(options: { id?: string; hasUI?: boolean } = {}) {
 	let calls = 0;
 	return {
 		id,
+		/** Dispatch a lifecycle or observation event without a model/provider. */
+		emit: async (name: string, event: object) => {
+			const results = [];
+			for (const handler of handlers[name] ?? []) results.push(await handler({ type: name, ...event }, ctx));
+			return results;
+		},
 		faults,
 		dialogs,
 		/** Emit `session_shutdown` with `reason` and wait for the handlers, as Pi does. */
@@ -482,5 +494,6 @@ export function resetRegistry(): void {
 	registry.launching.clear();
 	registry.foreground.clear();
 	registry.nextId = 1;
+	registry.output = undefined;
 	registry.ctx = undefined;
 }

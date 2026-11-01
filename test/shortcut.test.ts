@@ -300,7 +300,7 @@ describe("the hint timer", () => {
 			s.shortcut("ctrl+shift+b");
 			await clock.settle(call);
 			// The task's poller (an interval) legitimately outlives the call; the
-			// hint's setTimeout and the promotion timer must both be gone.
+			// hint's setTimeout must be gone; there is no elapsed-time promotion timer.
 			assert.equal(
 				track.pending().filter((label) => label.startsWith("timeout")).length,
 				0,

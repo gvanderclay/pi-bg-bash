@@ -64,6 +64,48 @@ const pids = (pattern: string): number[] => {
 	}
 };
 
+describe("real output events", () => {
+	it("emits a silent producer's complete LF line while the same real process remains alive", {
+		timeout: 12000,
+	}, async () => {
+		const s = session();
+		const gate = scratch("watch-gate");
+		const id = await start(s, `printf 'WAITING\\n'; while [ ! -f ${gate} ]; do sleep 0.02; done; echo done`);
+		const pid = getRegistry().tasks.get(id)!.pid;
+		await s.toolCall("bash_watch", { id });
+		await waitFor(() => s.sent.some((m) => m.message.customType === "pi-bg-bash-output"), "output event", 7000);
+		const messages = s.sent.filter((m) => m.message.customType === "pi-bg-bash-output");
+		assert.match(messages[0].message.content, /"text":"WAITING"/);
+		assert.equal(alive(pid), true);
+		assert.equal(getRegistry().tasks.get(id)!.pid, pid);
+		await s.emit("context_with_system", { messages: messages.map(({ message }) => ({ role: "custom", ...message })) });
+		writeFileSync(gate, "");
+		await waitFor(() => s.sent.some((m) => m.message.customType === "pi-bg-bash"), "terminal notice", 7000);
+		assert.equal(
+			s.sent.filter((m) => m.message.customType === "pi-bg-bash-output").length,
+			1,
+			"no duplicate line when marker appears",
+		);
+		assert.match(text(await s.toolCall("bash_output", { id })), /WAITING\ndone/);
+	});
+
+	it("keeps a real split UTF8 line intact and removes wrapper markers", { timeout: 12000 }, async () => {
+		const s = session();
+		const gate = scratch("unicode-gate");
+		const id = await start(
+			s,
+			`printf '\\360\\237'; sleep 0.03; printf '\\214\\261\\n'; while [ ! -f ${gate} ]; do sleep 0.02; done`,
+		);
+		await s.toolCall("bash_watch", { id });
+		await waitFor(() => s.sent.some((m) => m.message.customType === "pi-bg-bash-output"), "UTF8 event", 7000);
+		const output = s.sent.find((m) => m.message.customType === "pi-bg-bash-output")!.message.content;
+		assert.match(output, /🌱/);
+		assert.doesNotMatch(output, /�|__PI_BG_EXIT__/);
+		writeFileSync(gate, "");
+		await ended(s, id);
+	});
+});
+
 describe("the wrapper", () => {
 	it("runs a command with quotes, #, $ and a heredoc exactly as written", async () => {
 		const result = await run(
@@ -150,17 +192,17 @@ describe("a foreground command", () => {
 		`echo $$ > ${pidFile}; echo started; while [ ! -f ${gate} ]; do sleep 0.02; done; ${after}`;
 	const pidOf = async (pidFile: string) => Number(await fileHas(pidFile));
 
-	it("past the threshold becomes a task: the same process runs on, detached from the turn, and is reported once", {
+	it("explicit waitFor becomes a task: the same process runs on, detached from the turn, and is reported once", {
 		timeout: 15000,
-	}, async (t) => {
-		// A short threshold for this test only: any other foreground call here must finish, not be promoted.
-		process.env.PI_BG_BASH_PROMOTE_MS = "300";
-		t.after(() => delete process.env.PI_BG_BASH_PROMOTE_MS);
+	}, async () => {
 		const s = session();
 		const [pidFile, gate] = [scratch("pid"), scratch("gate")];
 		const turn = new AbortController();
-		const result = await s.toolCall("bash", { command: blocked(pidFile, gate) }, turn.signal);
-		assert.match(text(result), /^Command still running after 0\.3 s; moved to the background as task bg-1\./);
+		const result = await s.toolCall("bash", { command: blocked(pidFile, gate), waitFor: "started" }, turn.signal);
+		assert.match(
+			text(result),
+			/^"started" appeared after [\d.]+ s; the command keeps running as background task bg-1\./,
+		);
 		assert.match(text(result), /Output so far:\nstarted\n$/);
 		const pid = await pidOf(pidFile);
 		const task = getRegistry().tasks.get("bg-1")!;
@@ -183,7 +225,7 @@ describe("a foreground command", () => {
 		assert.equal(text(result), "main\nlate-stderr\n");
 	});
 
-	it("that ends before the threshold returns the output and exit as Pi's bash does, and leaves no task or log", async () => {
+	it("returns normal output and exit as Pi's bash does, leaving no task or log", async () => {
 		const s = session();
 		const params = { command: "printf 'one\\ntwo\\n'; exit 4" };
 		const ours = await s.toolCall("bash", params);
@@ -204,7 +246,7 @@ describe("a foreground command", () => {
 		assert.equal(text(await s.toolCall("bash_tasks", {})), "No background tasks.");
 	});
 
-	it("aborted by the turn before the threshold is killed", async () => {
+	it("aborted by the turn while foreground is killed", async () => {
 		const s = session();
 		const [pidFile, gate] = [scratch("pid"), scratch("gate")];
 		const turn = new AbortController();

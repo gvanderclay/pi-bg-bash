@@ -2,20 +2,19 @@
 // `moduleCache: false`: module state does not survive `/reload`, this does.
 // It holds the 2 s poller, the 250 ms log-limit check, and the current `pi` and
 // context, which each load refreshes.
-import { randomBytes } from "node:crypto";
-import { existsSync } from "node:fs";
-import { join } from "node:path";
-
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import { debug, debugError, exitFields, taskFields } from "./debug.ts";
 import type { ForegroundRun } from "./foreground.ts";
+import { removeHold } from "./holds.ts";
 import { killGroup, killGroupNow } from "./kill.ts";
-import { type LaunchOptions, sessionLogDir } from "./launch.ts";
+import type { LaunchOptions } from "./launch.ts";
 import { appendLimitMarker, gzipLog, overLogLimit } from "./logs.ts";
 import { locateMarker, type Marker } from "./logview.ts";
 import { sendCompletion } from "./notify.ts";
 import { processPort } from "./port.ts";
+import type { Watch } from "./watch.ts";
+import { finalizeOutput, type OutputState, outputPending, pumpOutput } from "./watch-events.ts";
 
 const KEY = Symbol.for("pi-bg-bash.registry");
 /** How often the poller looks at running tasks. */
@@ -37,6 +36,16 @@ export type KillReason = "killed by agent" | "killed by user" | "timed out" | "l
 
 export type Task = {
 	id: string;
+	ownerSessionId: string;
+	terminalToken: string;
+	terminalObserved: boolean;
+	/** Included in any request, even one later aborted; distinct from committed observation. */
+	terminalSeen?: boolean;
+	/** Held-only, bounded immutable completion payload for a lost custom-steer retry. */
+	completion?: { content: string; sent: boolean; rearm?: boolean };
+	holdId?: string;
+	killCallId?: string;
+	watch?: Watch;
 	command: string;
 	cwd: string;
 	logPath: string;
@@ -86,6 +95,7 @@ type Registry = {
 	launching: Set<Promise<void>>;
 	/** Foreground calls in flight. Here, not in `foreground.ts`, so a reloaded copy of it sees them. */
 	foreground: Set<ForegroundRun>;
+	output?: OutputState;
 };
 
 /** What became of the processes an ended task left in its group. */
@@ -147,7 +157,17 @@ export async function endSession(): Promise<void> {
 	const tasks = [...registry.tasks.values()];
 	// No completion may leak into the next session from a kill still in flight
 	// (a /bg pick or a deadline kill), so mark every task reported before clearing.
-	for (const task of tasks) task.notified = true;
+	for (const task of tasks) {
+		task.notified = true;
+		if (task.holdId !== undefined) {
+			try {
+				removeHold(task.ownerSessionId, task.holdId);
+			} catch (error) {
+				debugError("hold-cleanup", error, { task: task.id });
+			}
+		}
+	}
+	registry.output = undefined;
 	const pids = new Set(
 		[...registry.groups, ...tasks.map((task) => task.pid)].filter((pid) => !registry.emptyGroups.has(pid)),
 	);
@@ -173,6 +193,11 @@ export function setContext(ctx: ExtensionContext): void {
 	getRegistry().ctx = ctx;
 }
 
+/** Recovery may create pending delivery after the last running task stopped its timer. */
+export function ensurePoller(): void {
+	startPollerIfNeeded(getRegistry());
+}
+
 export function runningCount(registry = getRegistry()): number {
 	return [...registry.tasks.values()].filter((task) => task.state === "running").length;
 }
@@ -188,48 +213,7 @@ export function updateFooter(registry: Registry = getRegistry()): void {
 	}
 }
 
-/** A log, id and nonce reserved for a command about to launch. */
-export type Reservation = { id: string; logPath: string; nonce: string };
-
-/** Reserve the next free task id and its log under `sessionId`. Ids restart per process but logs belong to the session: skip any id an earlier run of it used. */
-export function reserve(sessionId: string): Reservation {
-	const registry = getRegistry();
-	const dir = sessionLogDir(sessionId);
-	let id: string;
-	do id = `bg-${registry.nextId++}`;
-	while (existsSync(join(dir, `${id}.log`)) || existsSync(join(dir, `${id}.log.gz`)));
-	return { id, logPath: join(dir, `${id}.log`), nonce: randomBytes(8).toString("hex") };
-}
-
-/** Give back the id of a reservation nothing came of, when it is the newest, so ids stay consecutive. */
-export function release(reservation: Reservation): void {
-	const registry = getRegistry();
-	if (reservation.id === `bg-${registry.nextId - 1}`) registry.nextId--;
-}
-
-/** A running task for a launched process; `startedAt` is when it really began. Not registered yet: see `adopt`. */
-export function makeTask(
-	reservation: Reservation,
-	launched: { command: string; cwd: string; pid: number; startedAt: number; timeout?: number },
-): Task {
-	const { id, logPath, nonce } = reservation;
-	const { command, cwd, pid, startedAt } = launched;
-	return {
-		id,
-		command,
-		cwd,
-		logPath,
-		pid,
-		nonce,
-		scanFrom: 0,
-		startedAt,
-		deadline: launched.timeout !== undefined && launched.timeout > 0 ? startedAt + launched.timeout * 1000 : undefined,
-		state: "running",
-		readPosition: 0,
-		notified: false,
-		readFailures: 0,
-	};
-}
+export { makeTask, type Reservation, release, reserve, startTask } from "./task.ts";
 
 /** Register a running task: it shows in the footer and the list, and the poller reports its end. */
 export function adopt(task: Task): Task {
@@ -239,35 +223,6 @@ export function adopt(task: Task): Task {
 	updateFooter(registry);
 	startPollerIfNeeded(registry);
 	return task;
-}
-
-/** Start `command` as a registered background task under `ctx`'s session. */
-export async function startTask(
-	command: string,
-	ctx: ExtensionContext,
-	options: { timeout?: number } = {},
-): Promise<Task> {
-	getRegistry().ctx = ctx;
-	const reservation = reserve(ctx.sessionManager.getSessionId());
-	const { logPath, nonce } = reservation;
-	const pid = await launchGroup({ command, cwd: ctx.cwd, logPath, nonce, sessionEnv: sessionEnv(ctx) });
-	return adopt(makeTask(reservation, { command, cwd: ctx.cwd, pid, startedAt: Date.now(), timeout: options.timeout }));
-}
-
-/**
- * What Pi's `resolveSpawnContext` exports from the session, as far as `ctx`
- * reaches: id, session file, model provider and id, and the reasoning level.
- */
-function sessionEnv(ctx: ExtensionContext): Record<string, string> {
-	const env: Record<string, string> = { PI_SESSION_ID: ctx.sessionManager.getSessionId() };
-	const file = ctx.sessionManager.getSessionFile();
-	if (file) env.PI_SESSION_FILE = file;
-	if (ctx.model) {
-		env.PI_PROVIDER = ctx.model.provider;
-		env.PI_MODEL = ctx.model.id;
-	}
-	if (ctx.thinkingLevel) env.PI_REASONING_LEVEL = ctx.thinkingLevel;
-	return env;
 }
 
 function stopTimers(registry: Registry): void {
@@ -306,7 +261,7 @@ function checkLogLimits(registry: Registry): void {
 
 /** A task the poller still has work for: running, or ended and not yet reported. */
 function hasPending(registry: Registry): boolean {
-	return [...registry.tasks.values()].some((task) => task.state === "running" || !task.notified);
+	return outputPending() || [...registry.tasks.values()].some((task) => task.state === "running" || !task.notified);
 }
 
 /** Settle a running task if its marker appeared or its pid is gone. Updates the footer; never reports. */
@@ -509,6 +464,11 @@ function poll(registry: Registry): void {
 			// try again next tick
 		}
 	}
+	try {
+		pumpOutput();
+	} catch (error) {
+		debugError("watch-delivery", error);
+	}
 	if (!hasPending(registry)) stopTimers(registry);
 }
 
@@ -517,6 +477,7 @@ function notifyOnce(registry: Registry, task: Task): void {
 	if (task.notified || registry.pi === undefined) return;
 	task.notified = true;
 	try {
+		finalizeOutput(task);
 		sendCompletion(registry.pi, task);
 	} catch (error) {
 		task.notified = false;

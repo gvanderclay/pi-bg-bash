@@ -5,6 +5,7 @@ import { debugError } from "./debug.ts";
 import { openView } from "./logview.ts";
 import type { KillReason, Task, TaskState } from "./registry.ts";
 import { sanitize } from "./sanitize.ts";
+import { watchGaps } from "./watch.ts";
 
 export const MESSAGE_TYPE = "pi-bg-bash";
 /** How many lines of the log's end the message carries. */
@@ -119,18 +120,25 @@ export function completionText(task: Task): string {
 		`Background task ${task.id} finished: ${stateText(task)}, ran ${runtimeText(task)}.`,
 		`Command: ${oneLine(task.command)}`,
 		tail === "" ? "(no output)" : `${label}\n${tail}`,
+		...(task.watch === undefined
+			? []
+			: [
+					`Watch: ${task.watch.undelivered} event lines after seq ${task.watch.lastSentSeq} were not delivered; ${watchGaps(task.watch)}.${task.watch.finalReadFailed ? " Final scan unavailable." : ""} bash_output reads the log.`,
+				]),
 	].join("\n");
 }
 
 /** Send the completion as a steering message, which a busy agent gets when its current turn ends, and which starts a turn when the agent is idle. */
 export function sendCompletion(pi: ExtensionAPI, task: Task): void {
+	if (task.holdId !== undefined) task.completion ??= { content: completionText(task), sent: false };
 	pi.sendMessage(
 		{
 			customType: MESSAGE_TYPE,
-			content: completionText(task),
+			content: task.completion?.content ?? completionText(task),
 			display: true,
-			details: { id: task.id, exitCode: task.exitCode, state: task.state },
+			details: { id: task.id, exitCode: task.exitCode, state: task.state, token: task.terminalToken },
 		},
 		{ deliverAs: "steer", triggerTurn: true },
 	);
+	if (task.completion !== undefined) task.completion.sent = true;
 }

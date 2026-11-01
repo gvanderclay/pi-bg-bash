@@ -3,9 +3,10 @@
 A Pi extension that lets the model run shell commands in the background. It
 replaces Pi's `bash` tool with the same tool plus a `background` flag: a call
 with `background: true` starts the command detached, returns a task id at once,
-and wakes the agent with the result when the command exits. A foreground
-command that runs for more than two minutes moves to the background on its
-own, so a slow build or a dev server never blocks the session.
+and wakes the agent with the result when the command exits. Ordinary foreground
+calls wait for the command to finish and return its output; they never move to the
+background just because time passed. Only an explicit `waitFor` match or the
+user's keyboard shortcut can promote a running foreground call.
 
 ## Install
 
@@ -50,9 +51,10 @@ at once instead of waiting.
 
 ## What it adds
 
-- The `bash` tool keeps Pi's parameters and adds `background` and `waitFor`. Without `background` a
-  call runs in the foreground as before, and moves to the background after
-  120 s unless it has an explicit `timeout` or starts with `sleep`. Its
+- The `bash` tool keeps Pi's parameters and adds `background`, `waitFor` and `hold`.
+  Without `background: true`, a call waits in the foreground and returns normal
+  output when the command exits. Explicit `timeout` and turn abort still stop it.
+  Only an opt-in `waitFor` match or deliberate user shortcut can promote it. Its
   description tells the model to wait for something to finish (a CI run, a
   server coming up) with a blocking command such as `gh run watch <run-id>
   --exit-status` and `background: true`, never `sleep N` and then a check.
@@ -63,17 +65,20 @@ at once instead of waiting.
   should stay up.
 - A codemode script's `await tools.bash(...)` resolves to Pi's bash object,
   `{ output, truncated, full_output_path?, exit_code?, wall_time_seconds, task_id? }`.
-  When the command goes on as a task (`background: true`, a `waitFor` match,
-  the 120 s move or `ctrl+shift+b`), `task_id` holds its id for `bash_output`
+  When the command goes on as a task (`background: true`, a `waitFor` match
+  or the user's `ctrl+shift+b`), `task_id` holds its id for `bash_output`
   or `bash_kill`, `exit_code` is absent, `output` holds the output so far (empty
   for `background: true`), and `full_output_path`, when the output was
   truncated, is the task's log.
+- `bash_watch({ id, action?, contains? })` subscribes to output events while a task
+  keeps running. It is a native tool, available outside codemode even in
+  `codemode.only`. See [Output events and completion holds](#output-events-and-completion-holds).
 - `bash_output({ id, latest?, filter? })` reads a task's output from where the
   last read stopped, or only the newest output, optionally filtered by a regex.
 - `bash_tasks()` lists every task of the session with its state and runtime.
 - `bash_kill({ id })` stops a task and everything it started.
 - In a codemode script these three resolve to objects, not text (see
-  [Structured results](#structured-results)), and all four tools carry
+  [Structured results](#structured-results)), and these tools carry
   annotation hints for permission extensions.
 - `/bg` lists the tasks; enter shows the selected task's output and `x` kills
   it after a confirmation.
@@ -195,15 +200,13 @@ kept, as Pi's bash keeps inherited-pipe output. A command that vanishes without 
 exit marker ends the call with `Command terminated without an exit code`, its last
 output kept.
 
-- **Promotion:** a command still running 120 s after it started, with no
-  explicit `timeout` and not starting with `sleep`, becomes a task: the same live
-  wrapper is registered (id, footer `bg: N`, `bash_tasks`, one completion
-  message, runtime counted from the start). `exec` then ends as if the command
-  had exited 0, so Pi's bash closes its output and returns; the extension
-  keeps that result's text and structured output (its `exit_code` dropped,
-  `task_id` added) and wraps the text as
-  `Command still running after 120 s; moved to the background as task <id>. ...
-  Output so far: ...`. Nothing in Pi's bash is left pending. After promotion the
+- **Deliberate promotion:** an explicit `waitFor` match or the user's
+  `ctrl+shift+b` turns the live command into a task. The same wrapper is registered
+  (id, footer `bg: N`, `bash_tasks`, one completion message, runtime counted from
+  the start). `exec` then ends as if the command had exited 0, so Pi's bash closes
+  its output and returns; the extension keeps that text and structured output
+  (its `exit_code` dropped, `task_id` added), prefixed with the reason and elapsed
+  time described below. Nothing in Pi's bash is left pending. After promotion the
   turn's abort signal no longer reaches the process and no output flows to the
   finished call. A command that ends in the same instant ends normally.
   The task's `bash_output` continues after the output the promoted call showed
@@ -213,23 +216,22 @@ output kept.
 - **`waitFor`:** a plain substring (not a regex) matched against the stripped
   output as it arrives, including across two reads and inside a line that has
   no newline yet. On a match the call is promoted through the same `promote()`,
-  at once, even for a command starting with `sleep` or with an explicit
-  `timeout`, and answers `"<text>" appeared after N s; the command keeps running
-  as background task <id>. ... Output so far: ...`. An explicit `timeout` then
+  at once, even with an explicit `timeout`, and answers `"<text>" appeared after
+  N s; the command keeps running as background task <id>. ... Output so far: ...`. An explicit `timeout` then
   becomes the task's deadline (`startedAt` plus `timeout`, as for
   `background: true`); until a match it still kills the foreground call at the
-  `timeout`. If the call ends without a match (the command exits, the 120 s
-  promotion or `ctrl+shift+b` fires, or it fails), the result also says
+  `timeout`. If the call ends without a match (the command exits, the user
+  presses `ctrl+shift+b`, or it fails), the result also says
   `"<text>" never appeared in the output.`. `waitFor` with `background: true`
   and an empty `waitFor` are tool errors before anything starts. A match sends
   no message of its own; the completion message comes when the task ends. An
   escape sequence split across two reads is not stripped before matching.
-- **Not promoted:** a command with any explicit `timeout` (killed at it) or one
-  starting with `sleep`. `PI_BG_BASH_PROMOTE_MS` shortens the threshold, for the
-  contract test.
+- **No automatic promotion:** elapsed time and command spelling never turn an
+  ordinary foreground call into a task. The former `PI_BG_BASH_PROMOTE_MS`
+  variable is ignored; it no longer enables a timed move to the background.
 - **Shortcut:** `ctrl+shift+b` moves the running foreground command to the
-  background at once, without waiting the 120 s. It applies to any command,
-  including `sleep` and ones with an explicit `timeout`. The call answers
+  background at once, when the user deliberately requests it. It applies to any
+  command, including `sleep` and ones with an explicit `timeout`. The call answers
   `The user pressed ctrl+shift+b after N s: this command was deliberately
   moved to the background as task <id>, so you are not blocked on it. Do not
   run it again or start a sleep in its place. ...`. With no foreground
@@ -248,7 +250,7 @@ output kept.
   getters throwing is ignored, and the call still ends.
 - The one promotion path is
   `promote()` on each entry of `foregroundRuns()` (`foreground.ts`), the set of
-  foreground calls in flight; the 120 s timer and the shortcut both call it.
+  foreground calls in flight; only a `waitFor` match or the user's shortcut calls it.
 
 ## Debug log
 
@@ -262,7 +264,7 @@ and nothing else changes. A failed write to the log is dropped, never raised.
   `bash_tasks`).
 - **Events:** `task-start`, `task-exit` (`state`, `exitCode`), `kill-request`
   and `kill` (`reason`, `outcome`; a log-limit kill has that `reason`),
-  `deadline`, `promote` (`by: "timer"`, `"shortcut"` or `"waitFor"`, `elapsedMs`),
+  `deadline`, `promote` (`by: "shortcut"` or `"waitFor"`, `elapsedMs`),
   `session-end` (the task count and the groups it kills, with an `error` line
   for each kill that fails) and `rotate`.
 - **Errors:** every error the extension swallows or downgrades is an `error`
@@ -323,6 +325,121 @@ Annotations: `bash` is destructive and open-world; `bash_output` changes only
 the read position (not read-only, not destructive); `bash_tasks` is read-only
 and idempotent; `bash_kill` is destructive and idempotent. None but `bash`
 is open-world.
+
+## Output events and completion holds
+
+The output-event capability is tested with Pi 1.4. Start the command through the
+existing `bash` tool with `background: true`, then call the native `bash_watch`
+tool with its id. Launch permissions still apply to the original bash command;
+the subscription cannot launch, adopt or kill processes, or read arbitrary paths.
+
+`bash_watch({ id, action?: "start" | "stop", contains?: string[] })`:
+
+- `start` is the default. It returns immediately and sends new output as steering
+  messages at the next tool gap, or starts a turn when idle. The task keeps the
+  same process; a subscription does not interrupt a foreground tool call.
+- Replay begins at the start of the log, independently of `bash_output`. If the
+  log already exceeds 256 KiB, replay starts in its last 256 KiB, discards the
+  first cut line and reports skipped bytes. At most 16 watches may be active.
+- `contains` keeps lines containing any of 1–16 literal, case-sensitive
+  substrings, each at most 256 UTF-8 bytes. It is not a regex. Omit it for all
+  nonempty lines. Matching uses the stripped output.
+- A complete LF-terminated line is emitted even if the producer then goes silent.
+  Split UTF-8 and ANSI sequences within that line are retained until framing.
+  Invalid UTF-8 becomes replacement characters without changing byte offsets.
+- Output messages label the command output as data, not instructions. Each
+  JSON-string-framed record includes `task_id`, `seq`, `from_byte`, `to_byte`,
+  `text` and `partial`. Byte offsets use the marker-removed raw log. Repeated
+  equal lines are separate events; consumers deduplicate their own workflow actions.
+- The poller reads at most 64 KiB per watch and 256 KiB total per tick, round-robin.
+  Lines over 16 KiB raw or stripped are discarded through their LF. Pending output
+  is capped at 32 records and 32 KiB of JSON per watch, and each message at 32 KiB,
+  including its header. A record whose escaped JSON cannot fit is discarded.
+- Only one output message per session may be sent but not yet seen in request
+  context. Further output coalesces locally, dropping the oldest records when
+  necessary. Messages report cumulative `skipped_bytes`, `dropped_lines` and
+  `oversized_lines`, with sequence numbers showing which event lines were kept.
+  Delivery is bounded, not lossless. Recheck current external state after a gap;
+  do not infer that an omitted event succeeded. No output notification moves
+  `bash_output`'s read position.
+- An aborted or failed agent run pauses unsolicited output wakes and recovery of
+  lost held-completion messages. A new user run, or a run started by another
+  extension's message, resumes them. Initial completion delivery and unheld
+  completion behavior are unchanged.
+- If Escape, abort or an RPC queue clear discards a queued output batch, the same
+  batch/token is re-armed after the run settles. A held task's unseen completion
+  is likewise retained and retried with its original bounded payload/token; retries
+  respect the stop/error pause. Messages already included in request context are
+  not re-sent, even if that run was aborted. Their held completion still needs a
+  later normal run to commit observation. Queue-count APIs are not used to infer
+  delivery, since they omit custom steering messages.
+- `stop` permanently unsubscribes output for that task. Starting the same active
+  configuration is idempotent; restarting a stopped watch or changing its filter
+  is refused. Use `bash_output` for later reads. Stop does not kill the command.
+- Starting on an already-ended task reports `ended` and its state; it does not
+  replay a compressed historical log. Read `bash_output` instead.
+- A shrinking log stops its watch with a gap. Read failures are retried; running
+  log rotation is not supported. Watch polling never reads gzip files.
+- Completion takes precedence over output. Before the ordinary completion message,
+  the watch makes one bounded final scan and closes. Final unterminated text is
+  classified as partial; buffered event records not already sent are discarded.
+  The completion message for a watched task reports undelivered lines and gaps
+  and points to `bash_output`. Compression then works as before.
+
+`bash_watch` has Pi exposure `model-only`: the model calls it directly, even with
+`codemode.mode: "only"`; scripts cannot call `tools.bash_watch`. Its structured
+result reports the task state, `watch_state` (`active`, `stopped`, `ended` or
+`absent`), and the three cumulative gap counters. Permission extensions can
+authorize this tool separately. Delegation tool ceilings must include its exact
+name at each intended writable owner; registering it only in a child does not
+bypass a parent's ceiling.
+
+### Optional completion hold, atomic with launch
+
+A running background task does not ordinarily prevent a delegated session from
+reporting its final answer or exiting. For an operation that must keep that
+owner's task unfinished, use `bash({ command, background: true, hold: true })`.
+The default is false. `hold: true` requires `background: true` and a live completion
+host registered for the exact current session. Without one it fails **before
+spawn**; a failed spawn refunds its provisional hold.
+
+A completion host, such as a compatible Squire implementation, checks all holds
+before publishing its final task reply/tree completion or auto-exiting. No model
+request loop is created merely to wait. The hold becomes ready only after the
+task's terminal notification was included in a request and the agent run ended
+normally. An unseen terminal, abort or provider error does not release it.
+A successful `bash_kill` result also counts, including the top-level codemode
+result when kill was nested in a script, even if the script later throws: the
+recorded kill succeeded, but a normal agent run end is still required. `stuck`
+and `leftover-stuck` do not;
+a later successful kill is the recovery path.
+
+A hold is not a success predicate: exit errors and cancellation can release it
+once processed, and natural-exit leftovers do not delay it. The owner must inspect
+the outcome and confirm cleanup with `bash_kill` when needed. Session shutdown
+still kills all tracked groups, including leftovers. Stopping output does not
+release a launch hold. Passive servers should normally use the default, no hold.
+
+The host/provider interface is process-local data at
+`globalThis[Symbol.for("pi.completion-holds.v1")]`:
+
+```ts
+{
+  version: 1,
+  hosts: Map<sessionId, Map<hostName, runtimeToken>>,
+  holds: Map<sessionId, Map<holdId, { provider: string; ready: boolean }>>
+}
+```
+
+A host registers a fresh runtime token only after acquiring its current session,
+and removes only that token on every shutdown, including reload. Providers own
+their hold entries; hosts read them and fail closed on malformed current-session
+data. This extension checks live exact-session host presence before launch, writes
+its own provisional entries, and marks them ready after observation. Reload
+preserves task/watch cursors, random notification tokens and holds. Non-reload
+shutdown removes this provider's entries and clears subscriptions while keeping
+the existing process cleanup contract. There is no restart/reopen recovery,
+durable scheduler, cross-session subscription or automatic forge action.
 
 ## Killing, listing and deadlines
 
@@ -389,8 +506,8 @@ Tasks belong to the session that started them.
   refreshes its `pi` reference and replaces the poller, so one poller runs and
   completions go through the newest registration, once. A foreground command in
   flight is left running too, and is still in `foregroundRuns()` (kept in the
-  registry, not in module state); when it outlasts the threshold it is promoted
-  as usual.
+  registry, not in module state), waiting normally unless a `waitFor` match or
+  the user's shortcut deliberately promotes it.
 - **`quit`, `new`, `resume` and `fork` kill everything** (`session_shutdown`,
   awaited by Pi): the group kill (SIGTERM, grace, SIGKILL) on every task's group,
   finished ones too since a `server &` outlives its command, on every foreground

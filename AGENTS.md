@@ -1,9 +1,8 @@
 # pi-bg-bash
 
 A Pi extension that replaces the model's `bash` tool with Pi's own `bash` plus
-a `background` flag, moves long foreground commands to the background, and
-adds the `bash_output`, `bash_tasks` and `bash_kill` tools, the `/bg` command
-and the `ctrl+shift+b` shortcut.
+a `background` flag, and adds the `bash_output`, `bash_tasks`, `bash_kill` and
+`bash_watch` tools, the `/bg` command and the `ctrl+shift+b` shortcut.
 
 ## Layout
 
