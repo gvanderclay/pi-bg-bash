@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-11-01
+
 ### Changed
 
 - Shorter model-facing bash tool declarations reduce context use without changing
@@ -183,7 +185,8 @@ author's dotfiles; the changes below are against that copy.
 - Two behaviour tests that waited a fixed number of fake-time ticks for real
   file I/O now wait for the I/O itself, so they pass on a loaded machine.
 
-[Unreleased]: https://github.com/gvanderclay/pi-bg-bash/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/gvanderclay/pi-bg-bash/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/gvanderclay/pi-bg-bash/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/gvanderclay/pi-bg-bash/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/gvanderclay/pi-bg-bash/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/gvanderclay/pi-bg-bash/compare/v0.3.0...v0.4.0
