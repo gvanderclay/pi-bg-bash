@@ -23,7 +23,7 @@ import { finishOutputRun, observeOutput, recordKill, resumeOutput, settleOutput,
 
 const BACKGROUND_DESCRIPTION =
 	"Set `background: true` for a command you expect to outlast a minute or two. " +
-	"It returns task_id immediately; exit status and tail arrive automatically, waking an idle agent, " +
+	"It returns task_id immediately; exit status and tail arrive on exit, waking an idle agent, " +
 	"so do not sleep or poll `bash_output` to wait for it. " +
 	"For CI, background one blocking command such as `gh run watch <run-id> --exit-status` or `gh pr checks <number> --watch` " +
 	"instead of running `sleep N` and a check yourself. " +
