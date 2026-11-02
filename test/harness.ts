@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { mock } from "node:test";
 
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { TSchema } from "typebox";
 import { Value } from "typebox/value";
 
@@ -61,6 +62,7 @@ type Sent = {
 	message: { customType: string; content: string; display?: boolean; details?: unknown };
 	options: unknown;
 };
+type CustomOptions = Parameters<ExtensionContext["ui"]["custom"]>[1];
 type CustomFactory = (
 	tui: unknown,
 	theme: unknown,
@@ -99,6 +101,7 @@ export function session(options: { id?: string; hasUI?: boolean } = {}) {
 		confirmMessages: [] as string[],
 		confirm: true,
 		screens: [] as string[][],
+		customOptions: [] as CustomOptions[],
 		keys: [] as Step[][],
 		frames: [] as string[][],
 		/** Count of `tui.requestRender()` calls, to show a closed component stopped refreshing. */
@@ -136,8 +139,9 @@ export function session(options: { id?: string; hasUI?: boolean } = {}) {
 			dialogs.confirmMessages.push(message ?? "");
 			return dialogs.confirm;
 		},
-		custom: (factory: CustomFactory) =>
+		custom: (factory: CustomFactory, options?: CustomOptions) =>
 			new Promise((resolve, reject) => {
+				dialogs.customOptions.push(options);
 				let open = true;
 				const tui = {
 					terminal: { rows: 24, columns: 80 },

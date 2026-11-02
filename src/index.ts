@@ -32,8 +32,6 @@ const BACKGROUND_DESCRIPTION =
 
 const TASK_ID = Type.String({ description: "Task id from bash in this session" });
 
-// No guard for a Pi without `outputSchema`, unlike bash's: these schemas stand alone,
-// and such a Pi ignores the unknown fields.
 const STATE_FIELDS = {
 	task_id: Type.String(),
 	state: Type.Union([
@@ -96,18 +94,15 @@ export default function (pi: ExtensionAPI): void {
 			),
 			background: Type.Optional(Type.Boolean({ description: "Detach and return task_id immediately" })),
 		}),
-		// A Pi whose bash has no output schema returns no structured result to extend.
-		outputSchema:
-			builtin.outputSchema &&
-			Type.Object({
-				...(builtin.outputSchema as TObject).properties,
-				exit_code: Type.Optional(Type.Number({ description: "Absent when task_id is set" })),
-				task_id: Type.Optional(
-					Type.String({
-						description: "Background handle for bash_output, bash_watch or bash_kill",
-					}),
-				),
-			}),
+		outputSchema: Type.Object({
+			...(builtin.outputSchema as TObject).properties,
+			exit_code: Type.Optional(Type.Number({ description: "Absent when task_id is set" })),
+			task_id: Type.Optional(
+				Type.String({
+					description: "Background handle for bash_output, bash_watch or bash_kill",
+				}),
+			),
+		}),
 		annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
 		renderResult: builtin.renderResult && withTaskTimer(builtin.renderResult),
 		async execute(toolCallId, params, signal, onUpdate, ctx) {

@@ -51,7 +51,9 @@ export async function bgCommand(ctx: ExtensionCommandContext): Promise<void> {
 	// The list comes back after each view or kill, with the tasks' current state, until esc.
 	while (tasks().length > 0) {
 		const at = selected;
-		const pick = await ctx.ui.custom<Pick | undefined>((tui, theme, _keys, done) => taskList(at, tui, theme, done));
+		const pick = await ctx.ui.custom<Pick | undefined>((tui, theme, _keys, done) => taskList(at, tui, theme, done), {
+			blocked: { kind: "question", message: "Choose a background task" },
+		});
 		if (pick === undefined) return;
 		selected = pick.task.id;
 		if (pick.action === "kill") await confirmKill(pick.task, ctx);

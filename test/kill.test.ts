@@ -425,6 +425,8 @@ describe("/bg", () => {
 		s.dialogs.keys = [[keys.enter], [keys.home, keys.escape], [keys.escape]];
 		await s.command("bg");
 		const [, output, list] = s.dialogs.screens;
+		const pickerOptions = { blocked: { kind: "question", message: "Choose a background task" } };
+		assert.deepEqual(s.dialogs.customOptions, [pickerOptions, undefined, pickerOptions]);
 		assert.match(output[1], new RegExp(`^${id} \\| running`));
 		assert.deepEqual(
 			output.slice(2, -2),

@@ -12,9 +12,9 @@ user's keyboard shortcut can promote a running foreground call.
 
 You need:
 
-- Pi on macOS or Linux (not Windows). Pi 1.0.0 is the version pi-bg-bash is
-  tested with. Pi supplies the peer dependencies
-  `@earendil-works/pi-coding-agent` and `typebox`.
+- Pi 1.5.0 or later on macOS or Linux (not Windows). Pi supplies the peer
+  dependencies `@earendil-works/pi-coding-agent`, `@earendil-works/pi-tui`
+  and `typebox`.
 - A POSIX `sh`. The command itself runs in Pi's own shell (bash when present).
 - No other extension that replaces the `bash` tool or registers `/bg` or
   `ctrl+shift+b`. [pi-bg-tasks](https://www.npmjs.com/package/pi-bg-tasks)
@@ -82,7 +82,8 @@ at once instead of waiting.
   [Structured results](#structured-results)), and these tools carry
   annotation hints for permission extensions.
 - `/bg` lists the tasks; enter shows the selected task's output and `x` kills
-  it after a confirmation.
+  it after a confirmation. The task picker reports Pi as waiting for user input
+  to terminals that support program status; the output viewer does not.
 - `ctrl+shift+b` moves the running foreground command to the background. It
   needs a terminal that reports modified keys (the kitty keyboard protocol or
   `modifyOtherKeys`); inside tmux, also `set -g extended-keys on`.
@@ -329,7 +330,7 @@ is open-world.
 
 ## Output events and completion holds
 
-The output-event capability is tested with Pi 1.4. Start the command through the
+The output-event capability is tested with Pi 1.5.0. Start the command through the
 existing `bash` tool with `background: true`, then call the native `bash_watch`
 tool with its id. Launch permissions still apply to the original bash command;
 the subscription cannot launch, adopt or kill processes, or read arbitrary paths.
