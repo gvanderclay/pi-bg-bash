@@ -252,3 +252,47 @@ describe("recorded successful kill observation", () => {
 		}
 	});
 });
+
+describe("context transformers that project custom messages to user text", () => {
+	// Pi emits message_end for each drained steer with its customType and details, then a context
+	// transformer (billion-context-pi) may rebuild the request with custom messages as plain user text.
+	const drainStripped = async (s: Session) => {
+		for (const { message } of s.sent) {
+			await s.emit("message_start", { message: { role: "custom", ...message } });
+			await s.emit("message_end", { message: { role: "custom", ...message } });
+		}
+		await s.emit("context_with_system", {
+			messages: s.sent.map(({ message }) => ({ role: "user", content: [{ type: "text", text: message.content }] })),
+		});
+	};
+
+	it("acknowledges a drained output batch without its token in the request context", async () => {
+		const s = session();
+		const id = await start(s, "producer");
+		await s.toolCall("bash_watch", { id });
+		procs.of(id).write("tick 39\n");
+		await clock.tick();
+		assert.equal(s.sent.length, 1);
+		await drainStripped(s);
+		await end(s);
+		await settle(s);
+		await clock.tick(3);
+		assert.equal(s.sent.length, 1, "the same batch is never redelivered");
+		assert.equal(outputState().outstanding, undefined);
+	});
+
+	it("acknowledges a drained held completion and commits its hold", async () => {
+		const s = session();
+		host(s);
+		const id = await start(s, "producer", { hold: true });
+		procs.of(id).exit(0);
+		await clock.tick();
+		assert.equal(s.sent.length, 1);
+		await drainStripped(s);
+		await end(s);
+		await settle(s);
+		await clock.tick(3);
+		assert.equal(s.sent.length, 1, "the completion is never redelivered");
+		assert.equal(ready(s), true);
+	});
+});

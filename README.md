@@ -375,6 +375,10 @@ the subscription cannot launch, adopt or kill processes, or read arbitrary paths
   not re-sent, even if that run was aborted. Their held completion still needs a
   later normal run to commit observation. Queue-count APIs are not used to infer
   delivery, since they omit custom steering messages.
+- A message counts as seen in request context once Pi delivers it into the
+  conversation (its `message_end` event) or a request's context includes it, so
+  an extension that rewrites custom messages in the `context` hook cannot cause
+  redelivery.
 - `stop` permanently unsubscribes output for that task. Starting the same active
   configuration is idempotent; restarting a stopped watch or changing its filter
   is refused. Use `bash_output` for later reads. Stop does not kill the command.

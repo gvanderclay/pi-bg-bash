@@ -6,6 +6,13 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- An output batch or held completion is no longer sent again after every turn
+  when another extension's `context` hook rewrites custom messages, for example
+  to plain user text. Delivery is now also recognised at the message's
+  `message_end` event, which carries its type and token unchanged.
+
 ## [0.6.0] - 2026-11-02
 
 ### Changed
