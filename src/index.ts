@@ -301,6 +301,11 @@ export default function (pi: ExtensionAPI): void {
 	pi.on("context_with_system", (event) => {
 		observeOutput(event.messages);
 	});
+	// A drained steer reaches message_end with its customType and details, even when a context
+	// transformer later rebuilds the request with custom messages as plain user text.
+	pi.on("message_end", (event) => {
+		observeOutput([event.message]);
+	});
 	pi.on("agent_end", (event, ctx) => {
 		finishOutputRun(event.messages, ctx.signal?.aborted === true);
 	});
