@@ -78,6 +78,11 @@ at once instead of waiting.
   last read stopped, or only the newest output, optionally filtered by a regex.
 - `bash_tasks()` lists every task of the session with its state and runtime.
 - `bash_kill({ id })` stops a task and everything it started.
+- `bash_tasks` and `bash_kill` are deferred: where `codemode` is active, or
+  `tool_search` is active on a model Pi adds tools to in place (so loading one
+  keeps the prompt cache), they stay out of every request and are reached by
+  name; otherwise they are declared with the others. `task_id` names
+  `bash_kill`, and an unknown-id error names `bash_tasks`.
 - In a codemode script these three resolve to objects, not text (see
   [Structured results](#structured-results)), and these tools carry
   annotation hints for permission extensions.

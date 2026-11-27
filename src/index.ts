@@ -11,6 +11,7 @@ import { type TObject, Type } from "typebox";
 
 import { bgCommand } from "./bg.ts";
 import { rotateDebugLog } from "./debug.ts";
+import { declareUnlessReachable } from "./deferred.ts";
 import { COMPLETION_TEXT, foregroundRuns, runForeground } from "./foreground.ts";
 import { GRACE_MS } from "./kill.ts";
 import { cleanupOldLogs } from "./logs.ts";
@@ -29,6 +30,13 @@ const BACKGROUND_DESCRIPTION =
 	"instead of running `sleep N` and a check yourself. " +
 	"Otherwise bash waits for command exit and returns its output; " +
 	"only an explicit `waitFor` match or the user’s ctrl+shift+b shortcut can promote it.";
+
+/**
+ * Tools left out of every request where a codemode script or `tool_search`
+ * reaches them without costing the prompt cache. bash's `task_id` names
+ * bash_kill, and unknown-id errors name bash_tasks.
+ */
+const DEFERRED_TOOLS = ["bash_tasks", "bash_kill"];
 
 const TASK_ID = Type.String({ description: "Task id from bash in this session" });
 
@@ -227,6 +235,7 @@ export default function (pi: ExtensionAPI): void {
 	pi.registerTool({
 		name: "bash_tasks",
 		label: "bash_tasks",
+		exposure: "deferred",
 		description: "List this session's background tasks, including finished tasks.",
 		parameters: Type.Object({}),
 		outputSchema: Type.Object({ tasks: Type.Array(Type.Object(TASK_FIELDS)) }),
@@ -244,6 +253,7 @@ export default function (pi: ExtensionAPI): void {
 	pi.registerTool({
 		name: "bash_kill",
 		label: "bash_kill",
+		exposure: "deferred",
 		description: `Stop the task's process group: SIGTERM, then SIGKILL after ~${GRACE_MS / 1000}s if needed. Returns final state; no completion message.`,
 		parameters: Type.Object({
 			id: TASK_ID,
@@ -312,8 +322,10 @@ export default function (pi: ExtensionAPI): void {
 	pi.on("before_agent_start", (event) => {
 		resumeOutput(event.messageType, event.messageType === "custom" ? event.message.customType : undefined);
 	});
+	pi.on("model_select", (event) => declareUnlessReachable(pi, DEFERRED_TOOLS, event.model));
 	pi.on("session_start", (_event, ctx) => {
 		setContext(ctx);
+		declareUnlessReachable(pi, DEFERRED_TOOLS, ctx.model);
 		rotateDebugLog();
 		cleanupOldLogs(getRegistry().tasks.values());
 	});
