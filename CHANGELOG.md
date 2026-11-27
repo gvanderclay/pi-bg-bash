@@ -6,6 +6,15 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- `bash_tasks` and `bash_kill` are deferred where reaching them keeps the
+  prompt cache: with active `codemode`, or with `tool_search` on a model Pi
+  adds tools to in place. Their declarations, about 1,500 characters, then
+  leave every request; `task_id` names `bash_kill` and unknown-id errors
+  name `bash_tasks`. Elsewhere they stay declared, and switching to a model
+  that resends its tools declares them.
+
 ## [0.6.0] - 2026-11-02
 
 ### Changed

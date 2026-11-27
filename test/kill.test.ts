@@ -39,6 +39,45 @@ async function timed(call: Promise<unknown>): Promise<number> {
 	return Date.now() - from;
 }
 
+// Models whose tool changes Pi sends in place, and one it resends the whole tool list for.
+const inPlace = {
+	api: "anthropic-messages",
+	compat: { supportsMidConvoSystemMessages: true, supportsMidConvoToolChanges: true },
+};
+const resends = { api: "anthropic-messages", compat: {} };
+const TASK_TOOLS = ["bash", "bash_kill", "bash_output", "bash_tasks", "bash_watch"];
+const declared = (s: ReturnType<typeof session>) => s.activeTools().filter((name) => name.startsWith("bash"));
+
+describe("declared tools", () => {
+	it("leave bash_tasks and bash_kill out where codemode or a cache-keeping tool_search reaches them", async () => {
+		for (const options of [
+			{ builtins: ["codemode"], model: resends },
+			{ builtins: ["tool_search"], model: inPlace },
+		]) {
+			const s = session(options);
+			await s.sessionStart();
+			assert.deepEqual(declared(s), ["bash", "bash_output", "bash_watch"], JSON.stringify(options.builtins));
+			// Still callable: codemode scripts and tool_search reach registered tools.
+			assert.equal(text(await s.toolCall("bash_tasks", {})), "No background tasks.");
+		}
+	});
+
+	it("include every task tool where nothing else reaches them without losing the cache", async () => {
+		for (const options of [{}, { builtins: ["tool_search"], model: resends }]) {
+			const s = session(options);
+			await s.sessionStart();
+			assert.deepEqual(declared(s), TASK_TOOLS);
+		}
+		// Switching to a model that resends its tools declares them; switching back keeps them.
+		const s = session({ builtins: ["tool_search"], model: inPlace });
+		await s.sessionStart();
+		await s.emit("model_select", { model: resends, source: "set" });
+		assert.deepEqual(declared(s), TASK_TOOLS);
+		await s.emit("model_select", { model: inPlace, source: "set" });
+		assert.deepEqual(declared(s), TASK_TOOLS);
+	});
+});
+
 describe("bash_tasks", () => {
 	it("says so when there are no tasks", async () => {
 		const s = session();

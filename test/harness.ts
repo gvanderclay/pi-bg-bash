@@ -77,8 +77,18 @@ export const keys = { up: "\x1b[A", down: "\x1b[B", enter: "\r", escape: "\x1b",
 let counter = 0;
 
 /** One fake Pi session running the extension. */
-export function session(options: { id?: string; hasUI?: boolean } = {}) {
+export function session(
+	options: {
+		id?: string;
+		hasUI?: boolean;
+		/** Other extensions' tools, such as `codemode` or `tool_search`, registered and active from the start. */
+		builtins?: string[];
+		model?: unknown;
+	} = {},
+) {
 	const id = options.id ?? `session-${process.pid}-${++counter}`;
+	/** The tools declared to the model; registering a direct tool activates it, as Pi does. */
+	let active = new Set(options.builtins ?? []);
 	let uiEnabled = options.hasUI ?? true;
 	const tools: Record<string, Tool> = {};
 	const handlers: Record<string, Handler[]> = {};
@@ -116,6 +126,13 @@ export function session(options: { id?: string; hasUI?: boolean } = {}) {
 		},
 		registerTool: (tool: Tool) => {
 			tools[tool.name] = tool;
+			if (tool.exposure === undefined || tool.exposure === "direct" || tool.exposure === "model-only")
+				active.add(tool.name);
+		},
+		getAllTools: () => [...(options.builtins ?? []), ...Object.keys(tools)].map((name) => ({ name })),
+		getActiveTools: () => [...active],
+		setActiveTools: (names: string[]) => {
+			active = new Set(names);
 		},
 		registerShortcut: (shortcut: string, options: { description?: string; handler: (ctx: unknown) => unknown }) => {
 			shortcuts[shortcut] = options;
@@ -185,7 +202,9 @@ export function session(options: { id?: string; hasUI?: boolean } = {}) {
 		set hasUI(value: boolean) {
 			uiEnabled = value;
 		},
-		model: { provider: "test-provider", id: "test-model" } as { provider: string; id: string } | undefined,
+		model: (options.model ?? { provider: "test-provider", id: "test-model" }) as
+			| { provider: string; id: string }
+			| undefined,
 		thinkingLevel: "high" as string | undefined,
 		sessionManager: { getSessionId: () => id, getSessionFile: () => join(root, "sessions", `${id}.jsonl`) },
 		get ui() {
@@ -230,6 +249,8 @@ export function session(options: { id?: string; hasUI?: boolean } = {}) {
 		},
 		/** One registered tool's definition. */
 		tool: (name: string) => tools[name],
+		/** The tools declared to the model now, sorted. */
+		activeTools: () => [...active].sort(),
 		/** Call a tool the way Pi does, with this session's context. */
 		toolCall: async (name: string, params: unknown, signal?: AbortSignal): Promise<ToolResult> => {
 			const result = await tools[name].execute(`call-${++calls}`, params as never, signal, undefined, ctx);
